@@ -115,7 +115,7 @@ public final class Helenus {
 
         if (instance == null) {
 
-            instance = settings.getDslInstantiator().instantiate(iface, classLoader, parent, metadata);
+            instance = settings.getDslInstantiator(iface).instantiate(iface, classLoader, parent, metadata);
 
             if (!parent.isPresent()) {
 

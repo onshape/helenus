@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>net.helenus</groupId>
     <artifactId>helenus-core</artifactId>
-    <version>2.0.3-SNAPSHOT</version>
+    <version>2.1.4-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>helenus</name>
@@ -125,6 +125,12 @@
             <groupId>org.aspectj</groupId>
             <artifactId>aspectjweaver</artifactId>
             <version>1.8.10</version>
+        </dependency>
+
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>1.7.1</version>
         </dependency>
 
         <dependency>

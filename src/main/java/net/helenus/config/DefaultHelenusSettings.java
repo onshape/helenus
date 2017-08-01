@@ -20,8 +20,10 @@ import java.util.function.Function;
 
 import net.helenus.core.DslInstantiator;
 import net.helenus.core.MapperInstantiator;
+import net.helenus.core.reflect.InjectionDslInstantiator;
 import net.helenus.core.reflect.ReflectionDslInstantiator;
 import net.helenus.core.reflect.ReflectionMapperInstantiator;
+import net.helenus.mapping.annotation.Enlisted;
 import net.helenus.mapping.convert.CamelCaseToUnderscoreConverter;
 
 public class DefaultHelenusSettings implements HelenusSettings {
@@ -37,8 +39,12 @@ public class DefaultHelenusSettings implements HelenusSettings {
 	}
 
 	@Override
-	public DslInstantiator getDslInstantiator() {
-		return ReflectionDslInstantiator.INSTANCE;
+	public DslInstantiator getDslInstantiator(Class<?> iface) {
+        if (null != iface.getDeclaredAnnotation(Enlisted.class)) {
+            return ReflectionDslInstantiator.INSTANCE;
+        } else {
+            return InjectionDslInstantiator.INSTANCE;
+        }
 	}
 
 	@Override

@@ -27,7 +27,7 @@ public interface HelenusSettings {
 
 	Function<Method, Boolean> getGetterMethodDetector();
 
-	DslInstantiator getDslInstantiator();
+	DslInstantiator getDslInstantiator(Class<?> iface);
 
 	MapperInstantiator getMapperInstantiator();
 

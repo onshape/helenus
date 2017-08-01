@@ -13,23 +13,19 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.test.unit.core.dsl;
+package net.helenus.mapping.annotation;
 
-import java.util.Date;
+import java.lang.annotation.*;
 
-import net.helenus.mapping.annotation.*;
+/**
+ * Enlisted annotation
+ *
+ * This annotation is used to mark table entity objects for the draft/builder pattern.
+ */
 
-@Table
-public interface Account {
-
-    @PartitionKey
-    Long id();
-
-    @ClusteringColumn
-    Date time();
-
-    @Index
-    @Column("is_active")
-    boolean active();
-
+@Inherited
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE})
+public @interface Enlisted {
+    Class value() default Object.class;
 }

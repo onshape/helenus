@@ -22,6 +22,17 @@ import net.helenus.core.reflect.HelenusPropertyNode;
 
 public interface DslInstantiator {
 
+    /**
+     * Return an instance of either a proxy object or dynamic runtime-generated class that implements the
+     * {@code iface} supplied and maps to instances of this type in the database.
+     *
+     * @param iface
+     * @param classLoader
+     * @param parent
+     * @param metadata
+     * @param <E>
+     * @return
+     */
 	<E> E instantiate(Class<E> iface, ClassLoader classLoader, Optional<HelenusPropertyNode> parent, Metadata metadata);
 
 }

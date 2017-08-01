@@ -54,13 +54,12 @@ public final class HelenusMappingEntity implements HelenusEntity {
 		this.type = Objects.requireNonNull(type, "type is empty");
 		this.name = resolveName(iface, type);
 
-		HelenusSettings settings = Helenus.settings();
+        HelenusSettings settings = Helenus.settings();
 
-
-		List<Method> methods = new ArrayList<Method>();
+        List<Method> methods = new ArrayList<Method>();
 
         methods.addAll(Arrays.asList(iface.getDeclaredMethods()));
-		for (Class<?> c : iface.getInterfaces()) {
+        for (Class<?> c : iface.getInterfaces()) {
             methods.addAll(Arrays.asList(c.getDeclaredMethods()));
         }
 

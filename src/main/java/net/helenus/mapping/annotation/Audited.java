@@ -13,23 +13,24 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.test.unit.core.dsl;
 
-import java.util.Date;
+package net.helenus.mapping.annotation;
 
-import net.helenus.mapping.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Inherited;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-@Table
-public interface Account {
 
-    @PartitionKey
-    Long id();
-
-    @ClusteringColumn
-    Date time();
-
-    @Index
-    @Column("is_active")
-    boolean active();
-
+/**
+ * Annotation to enable auditing in Helenus via annotation configuration.
+ */
+@Inherited
+@Documented
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Audited {
+    Class value() default Object.class;
 }
