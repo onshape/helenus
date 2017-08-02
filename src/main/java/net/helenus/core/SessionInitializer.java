@@ -15,19 +15,9 @@
  */
 package net.helenus.core;
 
-import java.io.IOException;
-import java.io.PrintStream;
-import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.function.Consumer;
-import java.util.stream.Collector;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
+import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.util.concurrent.MoreExecutors;
-
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusEntityType;
 import net.helenus.mapping.value.ColumnValuePreparer;
@@ -35,10 +25,18 @@ import net.helenus.mapping.value.ColumnValueProvider;
 import net.helenus.support.HelenusException;
 import net.helenus.support.PackageUtil;
 
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+
 public final class SessionInitializer extends AbstractSessionOperations {
 
 	private final Session session;
 	private CodecRegistry registry;
+	private MetricRegistry metricRegistry;
 	private String usingKeyspace;
 	private boolean showCql = false;
 	private PrintStream printStream = System.out;
@@ -59,6 +57,9 @@ public final class SessionInitializer extends AbstractSessionOperations {
 		this.usingKeyspace = session.getLoggedKeyspace(); // can be null
 		this.sessionRepository = new SessionRepositoryBuilder(session);
 	}
+
+	@Override
+	public void cache(String key, Object value) { }
 
 	@Override
 	public Session currentSession() {
@@ -115,6 +116,12 @@ public final class SessionInitializer extends AbstractSessionOperations {
 		this.executor = executor;
 		return this;
 	}
+
+	public SessionInitializer withMetricsRegistry(MetricRegistry metricRegistry) {
+        Objects.requireNonNull(metricRegistry, "empty registry");
+        this.metricRegistry = metricRegistry;
+        return this;
+    }
 
 	public SessionInitializer withCachingExecutor() {
 		this.executor = Executors.newCachedThreadPool();
@@ -206,7 +213,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
 	public synchronized HelenusSession get() {
 		initialize();
 		return new HelenusSession(session, usingKeyspace, registry, showCql, printStream, sessionRepository, executor,
-				autoDdl == AutoDdl.CREATE_DROP);
+				autoDdl == AutoDdl.CREATE_DROP, metricRegistry);
 	}
 
 	private void initialize() {

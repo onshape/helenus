@@ -221,7 +221,15 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
 		return select;
 	}
 
-	@SuppressWarnings("unchecked")
+	@Override
+	public Optional<E> sync() {
+	    if (true) {
+        } else {
+            return super.sync();
+        }
+	}
+
+		@SuppressWarnings("unchecked")
 	@Override
 	public Stream<E> transform(ResultSet resultSet) {
 

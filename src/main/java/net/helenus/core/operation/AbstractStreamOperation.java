@@ -21,6 +21,7 @@ import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.google.common.base.Function;
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
@@ -64,10 +65,18 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 	}
 
 	public Stream<E> sync() {
+	    ListenableFuture<Stream<E>> future = async();
+        Futures.addCallback(future, new FutureCallback<String>() {
+            @Override
+            public void onSuccess(String contents) {
+                //...process web site contents
+            }
 
-		ResultSet resultSet = sessionOps.executeAsync(options(buildStatement()), showValues).getUninterruptibly();
-
-		return transform(resultSet);
+            @Override
+            public void onFailure(Throwable throwable) {
+                log.error("Exception in task", throwable);
+            }
+        });
 	}
 
 	public ListenableFuture<Stream<E>> async() {

@@ -145,6 +145,21 @@
             <version>20.0</version>
         </dependency>
 
+        <!-- Caching -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>2.5.3</version>
+        </dependency>
+
+        <!-- Metrics -->
+        <!-- https://mvnrepository.com/artifact/io.dropwizard.metrics/metrics-core -->
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-core</artifactId>
+            <version>3.2.3</version>
+        </dependency>
+
         <!-- Validation -->
         <dependency>
             <groupId>javax.validation</groupId>

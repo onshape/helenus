@@ -74,6 +74,7 @@ public abstract class AbstractOperation<E, O extends AbstractOperation<E, O>> ex
 			sessionOps.cache(getCacheKey(), result);
 		}
 		return result;
+
 	}
 
 	public ListenableFuture<E> async() {

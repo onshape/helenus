@@ -129,8 +129,7 @@ public abstract class AbstractSessionOperations {
 		}
 	}
 
-	public void cache(String key, Object value) {
-	}
+	public abstract void cache(String key, Object value);
 
 	RuntimeException translateException(RuntimeException e) {
 

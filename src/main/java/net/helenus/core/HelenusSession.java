@@ -15,20 +15,13 @@
  */
 package net.helenus.core;
 
-import java.io.Closeable;
-import java.io.PrintStream;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
-
+import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import net.helenus.core.operation.*;
 import net.helenus.core.reflect.HelenusPropertyNode;
+import net.helenus.mapping.ColumnType;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.MappingUtil;
 import net.helenus.mapping.value.*;
@@ -37,10 +30,15 @@ import net.helenus.support.Fun.Tuple1;
 import net.helenus.support.Fun.Tuple2;
 import net.helenus.support.Fun.Tuple6;
 
-public final class HelenusSession extends AbstractSessionOperations implements Closeable {
+import java.io.Closeable;
+import java.io.PrintStream;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
-	private final int MAX_CACHE_SIZE = 10000;
-	private final int MAX_CACHE_EXPIRE_SECONDS = 600;
+public final class HelenusSession extends AbstractSessionOperations implements Closeable {
 
 	private final Session session;
 	private final CodecRegistry registry;
@@ -54,12 +52,13 @@ public final class HelenusSession extends AbstractSessionOperations implements C
 	private final RowColumnValueProvider valueProvider;
 	private final StatementColumnValuePreparer valuePreparer;
 	private final Metadata metadata;
-	private final Cache<String, Object> sessionCache;
+	private final MetricRegistry metricRegistry;
+    private final Cache<String, Object> sessionCache;
 	private UnitOfWork currentUnitOfWork;
 
 	HelenusSession(Session session, String usingKeyspace, CodecRegistry registry, boolean showCql,
             PrintStream printStream, SessionRepositoryBuilder sessionRepositoryBuilder, Executor executor,
-            boolean dropSchemaOnClose) {
+            boolean dropSchemaOnClose, MetricRegistry metricRegistry) {
 		this.session = session;
 		this.registry = registry == null ? CodecRegistry.DEFAULT_INSTANCE : registry;
 		this.usingKeyspace = Objects.requireNonNull(usingKeyspace,
@@ -73,9 +72,16 @@ public final class HelenusSession extends AbstractSessionOperations implements C
 		this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
 		this.valuePreparer = new StatementColumnValuePreparer(this.sessionRepository);
 		this.metadata = session.getCluster().getMetadata();
-		this.sessionCache = CacheBuilder.newBuilder().maximumSize(MAX_CACHE_SIZE)
-				.expireAfterAccess(MAX_CACHE_EXPIRE_SECONDS, TimeUnit.SECONDS).recordStats().build();
-		this.currentUnitOfWork = null;
+        this.currentUnitOfWork = null;
+
+        this.metricRegistry = metricRegistry;
+        Caffeine<Object, Object> cacheBuilder = Caffeine.newBuilder()
+                .expireAfterWrite(5, TimeUnit.MINUTES)
+                .maximumSize(10_000);
+        if (this.metricRegistry != null) {
+            cacheBuilder.recordStats(() -> new MetricsStatsCounter(metricRegistry, "helenus-session-cache"));
+        }
+        sessionCache = cacheBuilder.build();
 	}
 
 	@Override
@@ -160,8 +166,12 @@ public final class HelenusSession extends AbstractSessionOperations implements C
 	}
 
 	public void cache(String key, Object value) {
-		sessionCache.put(key, value); // ttl
+        sessionCache.put(key, value);
 	}
+
+	public Object fetch(String key) {
+        return sessionCache.getIfPresent(key);
+    }
 
 	public <E> SelectOperation<E> select(Class<E> entityClass) {
 
@@ -172,7 +182,21 @@ public final class HelenusSession extends AbstractSessionOperations implements C
 		return new SelectOperation<E>(this, entity, (r) -> {
 
 			Map<String, Object> map = new ValueProviderMap(r, valueProvider, entity);
-			return (E) Helenus.map(entityClass, map);
+			E pojo = (E) Helenus.map(entityClass, map);
+			if (entity.isCacheable()) {
+			    StringBuilder cacheKey = new StringBuilder();
+                entity.getOrderedProperties().stream().forEach(property -> {
+                    ColumnType ct = property.getColumnType();
+                    switch (ct) {
+                    case PARTITION_KEY:
+                    case CLUSTERING_COLUMN:
+                        cacheKey.append(map.get(property.getPropertyName()).toString());
+                        break;
+                    }
+                });
+			    cache(cacheKey.toString(), pojo);
+            }
+			return pojo;
 
 		});
 	}
