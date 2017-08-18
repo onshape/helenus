@@ -45,7 +45,9 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
   protected List<Ordering> ordering = null;
   protected Integer limit = null;
   protected boolean allowFiltering = false;
+  protected boolean cacheResult = true;
 
+  protected AbstractCache cache;
 
   public SelectOperation(AbstractSessionOperations sessionOperations) {
     super(sessionOperations);
@@ -68,7 +70,6 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
                 return (E) Fun.ArrayTuple.of(arr);
               }
             };
-
   }
 
   public SelectOperation(AbstractSessionOperations sessionOperations, HelenusEntity entity) {
@@ -81,6 +82,9 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
             .map(p -> new HelenusPropertyNode(p, Optional.empty()))
             .forEach(p -> this.props.add(p));
 
+      if (entity.isCacheable()) {
+          this.cache = sessionOps.cacheFor(CacheManager.Type.FETCH);
+      }
   }
 
   public SelectOperation(
@@ -97,6 +101,9 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
             .map(p -> new HelenusPropertyNode(p, Optional.empty()))
             .forEach(p -> this.props.add(p));
 
+      if (entity.isCacheable()) {
+          this.cache = sessionOps.cacheFor(CacheManager.Type.FETCH);
+      }
   }
 
   public SelectOperation(
@@ -108,6 +115,9 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
     this.rowMapper = rowMapper;
     Collections.addAll(this.props, props);
 
+    if (props.length > 0 && props[0].getEntity().isCacheable()) {
+      this.cache = sessionOps.cacheFor(CacheManager.Type.FETCH);
+    }
   }
 
   public CountOperation count() {
@@ -140,13 +150,19 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
 
     HelenusEntity entity = Helenus.entity(entityClass);
 
+    if (entity.isCacheable()) {
+        this.cache = sessionOps.cacheFor(CacheManager.Type.FETCH);
+        //TODO cache entity
+    }
+
     this.rowMapper = null;
 
     return new SelectTransformingOperation<R, E>(
             this,
             (r) -> {
               Map<String, Object> map = new ValueProviderMap(r, sessionOps.getValueProvider(), entity);
-              return (R) Helenus.map(entityClass, map);
+              R result = (R) Helenus.map(entityClass, map);
+              return result;
             });
   }
 
@@ -180,6 +196,11 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
     return this;
   }
 
+  public SelectOperation<E> cache() {
+      this.cacheResult = true;
+      return this;
+  }
+
   @Override
   public BuiltStatement buildStatement() {
 
@@ -187,10 +208,16 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
     Selection selection = QueryBuilder.select();
 
     for (HelenusPropertyNode prop : props) {
-      selection = selection.column(prop.getColumnName());
+      String col = prop.getColumnName();
+      selection = selection.column(col);
 
       if (prop.getProperty().caseSensitiveIndex()) {
         allowFiltering = true;
+      }
+
+      if (cache != null && cacheResult) {
+        selection = selection.ttl(col);
+        selection = selection.writeTime(col);
       }
 
       if (entity == null) {
@@ -255,6 +282,12 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
                       Spliterators.spliteratorUnknownSize(resultSet.iterator(), Spliterator.ORDERED),
                       false);
     }
+  }
+
+  @Override
+  protected AbstractCache getCache() {
+      AbstractCache unitOfWorkCache = super.getCache();
+      return (unitOfWorkCache == null) ? this.cache : unitOfWorkCache;
   }
 
   private List<Ordering> getOrCreateOrdering() {
