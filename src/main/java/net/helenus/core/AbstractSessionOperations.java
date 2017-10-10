@@ -22,7 +22,6 @@ import com.datastax.driver.core.querybuilder.BuiltStatement;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.io.PrintStream;
 import java.util.concurrent.Executor;
-
 import net.helenus.mapping.value.ColumnValuePreparer;
 import net.helenus.mapping.value.ColumnValueProvider;
 import net.helenus.support.HelenusException;
@@ -50,6 +49,8 @@ public abstract class AbstractSessionOperations {
   public abstract ColumnValuePreparer getValuePreparer();
 
   public abstract ConsistencyLevel getDefaultConsistencyLevel();
+
+  public abstract boolean getDefaultQueryIdempotency();
 
   public PreparedStatement prepare(RegularStatement statement) {
     try {
@@ -122,5 +123,4 @@ public abstract class AbstractSessionOperations {
   void printCql(String cql) {
     getPrintStream().println(cql);
   }
-
 }

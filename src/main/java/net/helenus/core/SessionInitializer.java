@@ -25,10 +25,13 @@ import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import net.helenus.core.reflect.DslExportable;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusEntityType;
+import net.helenus.mapping.MappingUtil;
 import net.helenus.mapping.value.ColumnValuePreparer;
 import net.helenus.mapping.value.ColumnValueProvider;
+import net.helenus.support.Either;
 import net.helenus.support.HelenusException;
 import net.helenus.support.PackageUtil;
 
@@ -39,6 +42,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
   private String usingKeyspace;
   private boolean showCql = false;
   private ConsistencyLevel consistencyLevel;
+  private boolean idempotent = true;
   private MetricRegistry metricRegistry = new MetricRegistry();
   private Tracer zipkinTracer;
   private PrintStream printStream = System.out;
@@ -52,7 +56,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
   private KeyspaceMetadata keyspaceMetadata;
 
-  private final List<Object> initList = new ArrayList<Object>();
+  private final List<Either<Object, Class<?>>> initList = new ArrayList<Either<Object, Class<?>>>();
   private AutoDdl autoDdl = AutoDdl.UPDATE;
 
   SessionInitializer(Session session) {
@@ -125,6 +129,15 @@ public final class SessionInitializer extends AbstractSessionOperations {
     return consistencyLevel;
   }
 
+  public SessionInitializer idempotentQueryExecution(boolean idempotent) {
+    this.idempotent = idempotent;
+    return this;
+  }
+
+  public boolean getDefaultQueryIdempotency() {
+    return idempotent;
+  }
+
   @Override
   public PrintStream getPrintStream() {
     return printStream;
@@ -171,7 +184,10 @@ public final class SessionInitializer extends AbstractSessionOperations {
       PackageUtil.getClasses(packageName)
           .stream()
           .filter(c -> c.isInterface() && !c.isAnnotation())
-          .forEach(initList::add);
+          .forEach(
+              clazz -> {
+                initList.add(Either.right(clazz));
+              });
     } catch (IOException | ClassNotFoundException e) {
       throw new HelenusException("fail to add package " + packageName, e);
     }
@@ -183,7 +199,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
     int len = dsls.length;
     for (int i = 0; i != len; ++i) {
       Object obj = Objects.requireNonNull(dsls[i], "element " + i + " is empty");
-      initList.add(obj);
+      initList.add(Either.left(obj));
     }
     return this;
   }
@@ -241,6 +257,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
         executor,
         autoDdl == AutoDdl.CREATE_DROP,
         consistencyLevel,
+        idempotent,
         unitOfWorkClass,
         metricRegistry,
         zipkinTracer);
@@ -250,7 +267,19 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
     Objects.requireNonNull(usingKeyspace, "please define keyspace by 'use' operator");
 
-    initList.forEach(dsl -> sessionRepository.add(dsl));
+    initList.forEach(
+        (either) -> {
+          Class<?> iface = null;
+          if (either.isLeft()) {
+            iface = MappingUtil.getMappingInterface(either.getLeft());
+          } else {
+            iface = either.getRight();
+          }
+
+          DslExportable dsl = (DslExportable) Helenus.dsl(iface);
+          dsl.setCassandraMetadataForHelenusSesion(session.getCluster().getMetadata());
+          sessionRepository.add(dsl);
+        });
 
     TableOperations tableOps = new TableOperations(this, dropUnusedColumns, dropUnusedIndexes);
     UserTypeOperations userTypeOps = new UserTypeOperations(this, dropUnusedColumns);
@@ -258,8 +287,16 @@ public final class SessionInitializer extends AbstractSessionOperations {
     switch (autoDdl) {
       case CREATE_DROP:
 
-        // Drop tables first, otherwise a `DROP TYPE ...` will fail as the type is still referenced
-        // by a table.
+        // Drop view first, otherwise a `DROP TABLE ...` will fail as the type is still referenced
+        // by a view.
+        sessionRepository
+            .entities()
+            .stream()
+            .filter(e -> e.getType() == HelenusEntityType.VIEW)
+            .forEach(e -> tableOps.dropView(e));
+
+        // Drop tables second, before DROP TYPE otherwise a `DROP TYPE ...` will fail as the type is
+        // still referenced by a table.
         sessionRepository
             .entities()
             .stream()
@@ -278,6 +315,12 @@ public final class SessionInitializer extends AbstractSessionOperations {
             .filter(e -> e.getType() == HelenusEntityType.TABLE)
             .forEach(e -> tableOps.createTable(e));
 
+        sessionRepository
+            .entities()
+            .stream()
+            .filter(e -> e.getType() == HelenusEntityType.VIEW)
+            .forEach(e -> tableOps.createView(e));
+
         break;
 
       case VALIDATE:
@@ -288,6 +331,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
             .stream()
             .filter(e -> e.getType() == HelenusEntityType.TABLE)
             .forEach(e -> tableOps.validateTable(getTableMetadata(e), e));
+
         break;
 
       case UPDATE:
@@ -296,8 +340,20 @@ public final class SessionInitializer extends AbstractSessionOperations {
         sessionRepository
             .entities()
             .stream()
+            .filter(e -> e.getType() == HelenusEntityType.VIEW)
+            .forEach(e -> tableOps.dropView(e));
+
+        sessionRepository
+            .entities()
+            .stream()
             .filter(e -> e.getType() == HelenusEntityType.TABLE)
             .forEach(e -> tableOps.updateTable(getTableMetadata(e), e));
+
+        sessionRepository
+            .entities()
+            .stream()
+            .filter(e -> e.getType() == HelenusEntityType.VIEW)
+            .forEach(e -> tableOps.createView(e));
         break;
     }
 

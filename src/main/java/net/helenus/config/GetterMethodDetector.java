@@ -16,6 +16,7 @@
 package net.helenus.config;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.function.Function;
 import net.helenus.mapping.annotation.Transient;
 
@@ -30,6 +31,10 @@ public enum GetterMethodDetector implements Function<Method, Boolean> {
     }
 
     if (method.getParameterCount() != 0 || method.getReturnType() == void.class) {
+      return false;
+    }
+
+    if (Modifier.isStatic(method.getModifiers())) {
       return false;
     }
 

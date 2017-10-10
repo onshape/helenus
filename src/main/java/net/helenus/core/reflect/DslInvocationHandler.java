@@ -34,7 +34,12 @@ import net.helenus.support.HelenusException;
 
 public class DslInvocationHandler<E> implements InvocationHandler {
 
-  private final HelenusEntity entity;
+  private HelenusEntity entity = null;
+  private Metadata metadata = null;
+
+  private final Class<E> iface;
+  private final ClassLoader classLoader;
+
   private final Optional<HelenusPropertyNode> parent;
 
   private final Map<Method, HelenusProperty> map = new HashMap<Method, HelenusProperty>();
@@ -48,18 +53,46 @@ public class DslInvocationHandler<E> implements InvocationHandler {
       Optional<HelenusPropertyNode> parent,
       Metadata metadata) {
 
-    this.entity = new HelenusMappingEntity(iface, metadata);
+    this.metadata = metadata;
     this.parent = parent;
+    this.iface = iface;
+    this.classLoader = classLoader;
+  }
 
-    if (this.entity != null) {
-      for (HelenusProperty prop : entity.getOrderedProperties()) {
+  public void setCassandraMetadataForHelenusSesion(Metadata metadata) {
+    if (metadata != null) {
+      this.metadata = metadata;
+      entity = init(metadata);
+    }
+  }
 
-        map.put(prop.getGetterMethod(), prop);
+  private HelenusEntity init(Metadata metadata) {
+    HelenusEntity entity = new HelenusMappingEntity(iface, metadata);
 
-        AbstractDataType type = prop.getDataType();
-        Class<?> javaType = prop.getJavaType();
+    for (HelenusProperty prop : entity.getOrderedProperties()) {
 
-        if (type instanceof UDTDataType && !UDTValue.class.isAssignableFrom(javaType)) {
+      map.put(prop.getGetterMethod(), prop);
+
+      AbstractDataType type = prop.getDataType();
+      Class<?> javaType = prop.getJavaType();
+
+      if (type instanceof UDTDataType && !UDTValue.class.isAssignableFrom(javaType)) {
+
+        Object childDsl =
+            Helenus.dsl(
+                javaType,
+                classLoader,
+                Optional.of(new HelenusPropertyNode(prop, parent)),
+                metadata);
+
+        udtMap.put(prop.getGetterMethod(), childDsl);
+      }
+
+      if (type instanceof DTDataType) {
+        DTDataType dataType = (DTDataType) type;
+
+        if (dataType.getDataType() instanceof TupleType
+            && !TupleValue.class.isAssignableFrom(javaType)) {
 
           Object childDsl =
               Helenus.dsl(
@@ -68,32 +101,18 @@ public class DslInvocationHandler<E> implements InvocationHandler {
                   Optional.of(new HelenusPropertyNode(prop, parent)),
                   metadata);
 
-          udtMap.put(prop.getGetterMethod(), childDsl);
-        }
-
-        if (type instanceof DTDataType) {
-          DTDataType dataType = (DTDataType) type;
-
-          if (dataType.getDataType() instanceof TupleType
-              && !TupleValue.class.isAssignableFrom(javaType)) {
-
-            Object childDsl =
-                Helenus.dsl(
-                    javaType,
-                    classLoader,
-                    Optional.of(new HelenusPropertyNode(prop, parent)),
-                    metadata);
-
-            tupleMap.put(prop.getGetterMethod(), childDsl);
-          }
+          tupleMap.put(prop.getGetterMethod(), childDsl);
         }
       }
     }
+
+    return entity;
   }
 
   @Override
   public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 
+    HelenusEntity entity = this.entity;
     String methodName = method.getName();
 
     if ("equals".equals(methodName) && method.getParameterCount() == 1) {
@@ -107,6 +126,15 @@ public class DslInvocationHandler<E> implements InvocationHandler {
       return false;
     }
 
+    if (DslExportable.SET_METADATA_METHOD.equals(methodName)
+        && args.length == 1
+        && args[0] instanceof Metadata) {
+      if (metadata == null) {
+        this.setCassandraMetadataForHelenusSesion((Metadata) args[0]);
+      }
+      return null;
+    }
+
     if (method.getParameterCount() != 0 || method.getReturnType() == void.class) {
       throw new HelenusException("invalid getter method " + method);
     }
@@ -115,16 +143,20 @@ public class DslInvocationHandler<E> implements InvocationHandler {
       return hashCode();
     }
 
+    if (DslExportable.GET_PARENT_METHOD.equals(methodName)) {
+      return parent.get();
+    }
+
+    if (entity == null) {
+      entity = init(metadata);
+    }
+
     if ("toString".equals(methodName)) {
       return entity.toString();
     }
 
     if (DslExportable.GET_ENTITY_METHOD.equals(methodName)) {
       return entity;
-    }
-
-    if (DslExportable.GET_PARENT_METHOD.equals(methodName)) {
-      return parent.get();
     }
 
     HelenusProperty prop = map.get(method);
