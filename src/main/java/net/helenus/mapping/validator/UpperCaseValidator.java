@@ -17,38 +17,39 @@ package net.helenus.mapping.validator;
 
 import javax.validation.ConstraintValidator;
 import javax.validation.ConstraintValidatorContext;
+
 import net.helenus.mapping.annotation.Constraints;
 
-public final class UpperCaseValidator
-    implements ConstraintValidator<Constraints.UpperCase, CharSequence> {
+public final class UpperCaseValidator implements ConstraintValidator<Constraints.UpperCase, CharSequence> {
 
-  @Override
-  public void initialize(Constraints.UpperCase constraintAnnotation) {}
+	private static boolean isLowerCaseLetter(char ch) {
+		return ch >= 'a' && ch <= 'z';
+	}
 
-  @Override
-  public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+	@Override
+	public void initialize(Constraints.UpperCase constraintAnnotation) {
+	}
 
-    if (value == null) {
-      return true;
-    }
+	@Override
+	public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
 
-    final int len = value.length();
-    for (int i = 0; i != len; ++i) {
-      char c = value.charAt(i);
-      if (c <= 0x7F) {
-        if (isLowerCaseLetter(c)) {
-          return false;
-        }
-      }
-      if (c != Character.toUpperCase(c)) {
-        return false;
-      }
-    }
+		if (value == null) {
+			return true;
+		}
 
-    return true;
-  }
+		final int len = value.length();
+		for (int i = 0; i != len; ++i) {
+			char c = value.charAt(i);
+			if (c <= 0x7F) {
+				if (isLowerCaseLetter(c)) {
+					return false;
+				}
+			}
+			if (c != Character.toUpperCase(c)) {
+				return false;
+			}
+		}
 
-  private static boolean isLowerCaseLetter(char ch) {
-    return ch >= 'a' && ch <= 'z';
-  }
+		return true;
+	}
 }

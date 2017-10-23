@@ -15,13 +15,16 @@
  */
 package net.helenus.mapping;
 
-import com.datastax.driver.core.Metadata;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.Optional;
 import java.util.function.Function;
+
 import javax.validation.ConstraintValidator;
+
+import com.datastax.driver.core.Metadata;
+
 import net.helenus.core.SessionRepository;
 import net.helenus.mapping.javatype.AbstractJavaType;
 import net.helenus.mapping.javatype.MappingJavaTypes;
@@ -29,174 +32,171 @@ import net.helenus.mapping.type.AbstractDataType;
 
 public final class HelenusMappingProperty implements HelenusProperty {
 
-  private final HelenusEntity entity;
-  private final Method getter;
+	private final HelenusEntity entity;
+	private final Method getter;
 
-  private final String propertyName;
-  private final Optional<IdentityName> indexName;
-  private final boolean caseSensitiveIndex;
+	private final String propertyName;
+	private final Optional<IdentityName> indexName;
+	private final boolean caseSensitiveIndex;
 
-  private final ColumnInformation columnInfo;
+	private final ColumnInformation columnInfo;
 
-  private final Type genericJavaType;
-  private final Class<?> javaType;
-  private final AbstractJavaType abstractJavaType;
-  private final AbstractDataType dataType;
+	private final Type genericJavaType;
+	private final Class<?> javaType;
+	private final AbstractJavaType abstractJavaType;
+	private final AbstractDataType dataType;
+	private final ConstraintValidator<? extends Annotation, ?>[] validators;
+	private volatile Optional<Function<Object, Object>> readConverter = null;
+	private volatile Optional<Function<Object, Object>> writeConverter = null;
 
-  private volatile Optional<Function<Object, Object>> readConverter = null;
-  private volatile Optional<Function<Object, Object>> writeConverter = null;
+	public HelenusMappingProperty(HelenusMappingEntity entity, Method getter, Metadata metadata) {
+		this.entity = entity;
+		this.getter = getter;
 
-  private final ConstraintValidator<? extends Annotation, ?>[] validators;
+		this.propertyName = MappingUtil.getPropertyName(getter);
+		this.indexName = MappingUtil.getIndexName(getter);
+		this.caseSensitiveIndex = MappingUtil.caseSensitiveIndex(getter);
 
-  public HelenusMappingProperty(HelenusMappingEntity entity, Method getter, Metadata metadata) {
-    this.entity = entity;
-    this.getter = getter;
+		this.columnInfo = new ColumnInformation(getter);
 
-    this.propertyName = MappingUtil.getPropertyName(getter);
-    this.indexName = MappingUtil.getIndexName(getter);
-    this.caseSensitiveIndex = MappingUtil.caseSensitiveIndex(getter);
+		this.genericJavaType = getter.getGenericReturnType();
+		this.javaType = getter.getReturnType();
+		this.abstractJavaType = MappingJavaTypes.resolveJavaType(this.javaType);
 
-    this.columnInfo = new ColumnInformation(getter);
+		this.dataType = abstractJavaType.resolveDataType(this.getter, this.genericJavaType,
+				this.columnInfo.getColumnType(), metadata);
 
-    this.genericJavaType = getter.getGenericReturnType();
-    this.javaType = getter.getReturnType();
-    this.abstractJavaType = MappingJavaTypes.resolveJavaType(this.javaType);
+		this.validators = MappingUtil.getValidators(getter);
+	}
 
-    this.dataType =
-        abstractJavaType.resolveDataType(
-            this.getter, this.genericJavaType, this.columnInfo.getColumnType(), metadata);
+	@Override
+	public HelenusEntity getEntity() {
+		return entity;
+	}
 
-    this.validators = MappingUtil.getValidators(getter);
-  }
+	@Override
+	public Class<?> getJavaType() {
+		return (Class<?>) javaType;
+	}
 
-  @Override
-  public HelenusEntity getEntity() {
-    return entity;
-  }
+	@Override
+	public AbstractDataType getDataType() {
+		return dataType;
+	}
 
-  @Override
-  public Class<?> getJavaType() {
-    return (Class<?>) javaType;
-  }
+	@Override
+	public ColumnType getColumnType() {
+		return columnInfo.getColumnType();
+	}
 
-  @Override
-  public AbstractDataType getDataType() {
-    return dataType;
-  }
+	@Override
+	public int getOrdinal() {
+		return columnInfo.getOrdinal();
+	}
 
-  @Override
-  public ColumnType getColumnType() {
-    return columnInfo.getColumnType();
-  }
+	@Override
+	public OrderingDirection getOrdering() {
+		return columnInfo.getOrdering();
+	}
 
-  @Override
-  public int getOrdinal() {
-    return columnInfo.getOrdinal();
-  }
+	@Override
+	public IdentityName getColumnName() {
+		return columnInfo.getColumnName();
+	}
 
-  @Override
-  public OrderingDirection getOrdering() {
-    return columnInfo.getOrdering();
-  }
+	@Override
+	public Optional<IdentityName> getIndexName() {
+		return indexName;
+	}
 
-  @Override
-  public IdentityName getColumnName() {
-    return columnInfo.getColumnName();
-  }
+	@Override
+	public boolean caseSensitiveIndex() {
+		return caseSensitiveIndex;
+	}
 
-  @Override
-  public Optional<IdentityName> getIndexName() {
-    return indexName;
-  }
+	@Override
+	public String getPropertyName() {
+		return propertyName;
+	}
 
-  @Override
-  public boolean caseSensitiveIndex() {
-    return caseSensitiveIndex;
-  }
+	@Override
+	public Method getGetterMethod() {
+		return getter;
+	}
 
-  @Override
-  public String getPropertyName() {
-    return propertyName;
-  }
+	@Override
+	public Optional<Function<Object, Object>> getReadConverter(SessionRepository repository) {
 
-  @Override
-  public Method getGetterMethod() {
-    return getter;
-  }
+		if (readConverter == null) {
+			readConverter = abstractJavaType.resolveReadConverter(this.dataType, repository);
+		}
 
-  @Override
-  public Optional<Function<Object, Object>> getReadConverter(SessionRepository repository) {
+		return readConverter;
+	}
 
-    if (readConverter == null) {
-      readConverter = abstractJavaType.resolveReadConverter(this.dataType, repository);
-    }
+	@Override
+	public Optional<Function<Object, Object>> getWriteConverter(SessionRepository repository) {
 
-    return readConverter;
-  }
+		if (writeConverter == null) {
+			writeConverter = abstractJavaType.resolveWriteConverter(this.dataType, repository);
+		}
 
-  @Override
-  public Optional<Function<Object, Object>> getWriteConverter(SessionRepository repository) {
+		return writeConverter;
+	}
 
-    if (writeConverter == null) {
-      writeConverter = abstractJavaType.resolveWriteConverter(this.dataType, repository);
-    }
+	@Override
+	public ConstraintValidator<? extends Annotation, ?>[] getValidators() {
+		return validators;
+	}
 
-    return writeConverter;
-  }
+	@Override
+	public String toString() {
 
-  @Override
-  public ConstraintValidator<? extends Annotation, ?>[] getValidators() {
-    return validators;
-  }
+		StringBuilder str = new StringBuilder();
 
-  @Override
-  public String toString() {
+		String columnName = this.getColumnName().getName();
+		str.append("  ");
+		str.append(this.getDataType());
+		str.append(" ");
+		str.append(this.getPropertyName());
+		str.append("(");
+		if (!columnName.equals(this.getPropertyName())) {
+			str.append(columnName);
+		}
+		str.append(") ");
 
-    StringBuilder str = new StringBuilder();
+		ColumnType type = this.getColumnType();
 
-    String columnName = this.getColumnName().getName();
-    str.append("  ");
-    str.append(this.getDataType());
-    str.append(" ");
-    str.append(this.getPropertyName());
-    str.append("(");
-    if (!columnName.equals(this.getPropertyName())) {
-      str.append(columnName);
-    }
-    str.append(") ");
+		switch (type) {
+			case PARTITION_KEY :
+				str.append("partition_key[");
+				str.append(this.getOrdinal());
+				str.append("] ");
+				break;
 
-    ColumnType type = this.getColumnType();
+			case CLUSTERING_COLUMN :
+				str.append("clustering_column[");
+				str.append(this.getOrdinal());
+				str.append("] ");
+				OrderingDirection od = this.getOrdering();
+				if (od != null) {
+					str.append(od.name().toLowerCase()).append(" ");
+				}
+				break;
 
-    switch (type) {
-      case PARTITION_KEY:
-        str.append("partition_key[");
-        str.append(this.getOrdinal());
-        str.append("] ");
-        break;
+			case STATIC_COLUMN :
+				str.append("static ");
+				break;
 
-      case CLUSTERING_COLUMN:
-        str.append("clustering_column[");
-        str.append(this.getOrdinal());
-        str.append("] ");
-        OrderingDirection od = this.getOrdering();
-        if (od != null) {
-          str.append(od.name().toLowerCase()).append(" ");
-        }
-        break;
+			case COLUMN :
+				break;
+		}
 
-      case STATIC_COLUMN:
-        str.append("static ");
-        break;
+		Optional<IdentityName> idx = this.getIndexName();
+		if (idx.isPresent()) {
+			str.append("index(").append(idx.get().getName()).append(") ");
+		}
 
-      case COLUMN:
-        break;
-    }
-
-    Optional<IdentityName> idx = this.getIndexName();
-    if (idx.isPresent()) {
-      str.append("index(").append(idx.get().getName()).append(") ");
-    }
-
-    return str.toString();
-  }
+		return str.toString();
+	}
 }

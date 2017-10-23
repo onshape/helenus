@@ -15,13 +15,15 @@
  */
 package net.helenus.mapping.javatype;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.Metadata;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Optional;
 import java.util.function.Function;
+
+import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.Metadata;
+
 import net.helenus.core.SessionRepository;
 import net.helenus.mapping.ColumnType;
 import net.helenus.mapping.IdentityName;
@@ -33,107 +35,106 @@ import net.helenus.support.HelenusMappingException;
 
 public abstract class AbstractJavaType {
 
-  public static boolean isCollectionType() {
-    return false;
-  }
+	public static boolean isCollectionType() {
+		return false;
+	}
 
-  public abstract Class<?> getJavaClass();
+	static IdentityName resolveUDT(Types.UDT annotation) {
+		return IdentityName.of(annotation.value(), annotation.forceQuote());
+	}
 
-  public boolean isApplicable(Class<?> javaClass) {
-    return false;
-  }
+	static DataType resolveSimpleType(Method getter, DataType.Name typeName) {
+		DataType dataType = SimpleJavaTypes.getDataTypeByName(typeName);
+		if (dataType == null) {
+			throw new HelenusMappingException(
+					"only primitive types are allowed inside collections for the property " + getter);
+		}
+		return dataType;
+	}
 
-  public abstract AbstractDataType resolveDataType(
-      Method getter, Type genericJavaType, ColumnType columnType, Metadata metadata);
+	static void ensureTypeArguments(Method getter, int args, int expected) {
+		if (args != expected) {
+			throw new HelenusMappingException(
+					"expected " + expected + " of typed arguments for the property " + getter);
+		}
+	}
 
-  public Optional<Class<?>> getPrimitiveJavaClass() {
-    return Optional.empty();
-  }
+	static Either<DataType, IdentityName> autodetectParameterType(Method getter, Type type, Metadata metadata) {
 
-  public Optional<Function<Object, Object>> resolveReadConverter(
-      AbstractDataType dataType, SessionRepository repository) {
-    return Optional.empty();
-  }
+		DataType dataType = null;
 
-  public Optional<Function<Object, Object>> resolveWriteConverter(
-      AbstractDataType dataType, SessionRepository repository) {
-    return Optional.empty();
-  }
+		if (type instanceof Class<?>) {
 
-  static IdentityName resolveUDT(Types.UDT annotation) {
-    return IdentityName.of(annotation.value(), annotation.forceQuote());
-  }
+			Class<?> javaType = (Class<?>) type;
+			dataType = SimpleJavaTypes.getDataTypeByJavaClass(javaType);
 
-  static DataType resolveSimpleType(Method getter, DataType.Name typeName) {
-    DataType dataType = SimpleJavaTypes.getDataTypeByName(typeName);
-    if (dataType == null) {
-      throw new HelenusMappingException(
-          "only primitive types are allowed inside collections for the property " + getter);
-    }
-    return dataType;
-  }
+			if (dataType != null) {
+				return Either.left(dataType);
+			}
 
-  static void ensureTypeArguments(Method getter, int args, int expected) {
-    if (args != expected) {
-      throw new HelenusMappingException(
-          "expected " + expected + " of typed arguments for the property " + getter);
-    }
-  }
+			if (MappingUtil.isTuple(javaType)) {
+				dataType = TupleValueJavaType.toTupleType(javaType, metadata);
+				return Either.left(dataType);
+			}
 
-  static class DataTypeInfo {
-    final DataType dataType;
-    final Class<?> typeArgument;
+			IdentityName udtName = MappingUtil.getUserDefinedTypeName(javaType, false);
 
-    DataTypeInfo(DataType dataType) {
-      this.dataType = dataType;
-      this.typeArgument = null;
-    }
+			if (udtName != null) {
+				return Either.right(udtName);
+			}
+		}
 
-    DataTypeInfo(DataType dataType, Class<?> typeArgument) {
-      this.dataType = dataType;
-      this.typeArgument = typeArgument;
-    }
-  }
+		throw new HelenusMappingException(
+				"unknown parameter type " + type + " in the collection for the property " + getter);
+	}
 
-  static Either<DataType, IdentityName> autodetectParameterType(
-      Method getter, Type type, Metadata metadata) {
+	static Type[] getTypeParameters(Type genericJavaType) {
 
-    DataType dataType = null;
+		if (genericJavaType instanceof ParameterizedType) {
 
-    if (type instanceof Class<?>) {
+			ParameterizedType type = (ParameterizedType) genericJavaType;
 
-      Class<?> javaType = (Class<?>) type;
-      dataType = SimpleJavaTypes.getDataTypeByJavaClass(javaType);
+			return type.getActualTypeArguments();
+		}
 
-      if (dataType != null) {
-        return Either.left(dataType);
-      }
+		return new Type[]{};
+	}
 
-      if (MappingUtil.isTuple(javaType)) {
-        dataType = TupleValueJavaType.toTupleType(javaType, metadata);
-        return Either.left(dataType);
-      }
+	public abstract Class<?> getJavaClass();
 
-      IdentityName udtName = MappingUtil.getUserDefinedTypeName(javaType, false);
+	public boolean isApplicable(Class<?> javaClass) {
+		return false;
+	}
 
-      if (udtName != null) {
-        return Either.right(udtName);
-      }
-    }
+	public abstract AbstractDataType resolveDataType(Method getter, Type genericJavaType, ColumnType columnType,
+			Metadata metadata);
 
-    throw new HelenusMappingException(
-        "unknown parameter type " + type + " in the collection for the property " + getter);
-  }
+	public Optional<Class<?>> getPrimitiveJavaClass() {
+		return Optional.empty();
+	}
 
-  static Type[] getTypeParameters(Type genericJavaType) {
+	public Optional<Function<Object, Object>> resolveReadConverter(AbstractDataType dataType,
+			SessionRepository repository) {
+		return Optional.empty();
+	}
 
-    if (genericJavaType instanceof ParameterizedType) {
+	public Optional<Function<Object, Object>> resolveWriteConverter(AbstractDataType dataType,
+			SessionRepository repository) {
+		return Optional.empty();
+	}
 
-      ParameterizedType type = (ParameterizedType) genericJavaType;
+	static class DataTypeInfo {
+		final DataType dataType;
+		final Class<?> typeArgument;
 
-      return type.getActualTypeArguments();
-    }
+		DataTypeInfo(DataType dataType) {
+			this.dataType = dataType;
+			this.typeArgument = null;
+		}
 
-    return new Type[] {};
-  }
+		DataTypeInfo(DataType dataType, Class<?> typeArgument) {
+			this.dataType = dataType;
+			this.typeArgument = typeArgument;
+		}
+	}
 }

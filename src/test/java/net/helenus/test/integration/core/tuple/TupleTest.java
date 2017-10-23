@@ -20,6 +20,7 @@ import static net.helenus.core.Query.eq;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.TupleType;
 import com.datastax.driver.core.TupleValue;
+import java.util.concurrent.TimeoutException;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.test.integration.build.AbstractEmbeddedCassandraTest;
@@ -46,7 +47,7 @@ public class TupleTest extends AbstractEmbeddedCassandraTest {
   }
 
   @Test
-  public void testCruid() {
+  public void testCruid() throws TimeoutException {
 
     AlbumInformation info =
         new AlbumInformation() {
@@ -119,7 +120,7 @@ public class TupleTest extends AbstractEmbeddedCassandraTest {
   }
 
   @Test
-  public void testNoMapping() {
+  public void testNoMapping() throws TimeoutException {
 
     TupleType tupleType = session.getMetadata().newTupleType(DataType.text(), DataType.text());
     TupleValue info = tupleType.newValue();

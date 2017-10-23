@@ -20,6 +20,7 @@ import static net.helenus.core.Query.eq;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.TimeoutException;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.test.integration.build.AbstractEmbeddedCassandraTest;
@@ -29,6 +30,7 @@ import org.junit.Test;
 // See: https://docs.datastax.com/en/cql/3.3/cql/cql_using/useCreateMV.html
 //      https://docs.datastax.com/en/cql/3.3/cql/cql_reference/cqlCreateMaterializedView.html
 //      https://www.datastax.com/dev/blog/materialized-view-performance-in-cassandra-3-x
+//      https://cassandra-zone.com/materialized-views/
 public class MaterializedViewTest extends AbstractEmbeddedCassandraTest {
 
   static Cyclist cyclist;
@@ -55,22 +57,21 @@ public class MaterializedViewTest extends AbstractEmbeddedCassandraTest {
             .get();
     cyclist = session.dsl(Cyclist.class);
 
-    session
-        .insert(cyclist)
-        .value(cyclist::cid, UUID.randomUUID())
-        .value(cyclist::age, 18)
-        .value(cyclist::birthday, dateFromString("1997-02-08"))
-        .value(cyclist::country, "Netherlands")
-        .value(cyclist::name, "Pascal EENKHOORN")
-        .sync();
+    //try {
+      session
+          .insert(cyclist)
+          .value(cyclist::cid, UUID.randomUUID())
+          .value(cyclist::age, 18)
+          .value(cyclist::birthday, dateFromString("1997-02-08"))
+          .value(cyclist::country, "Netherlands")
+          .value(cyclist::name, "Pascal EENKHOORN")
+          .sync();
+    //} catch (TimeoutException e) {
+    //}
   }
 
   @Test
-  public void testMv() throws Exception {
-    session
-        .select(Cyclist.class)
-        .<CyclistsByAge>from(CyclistsByAge.class)
-        .where(cyclist::age, eq(18))
-        .sync();
+  public void testMv() throws TimeoutException {
+    session.select(Cyclist.class).from(CyclistsByAge.class).where(cyclist::age, eq(18)).sync();
   }
 }

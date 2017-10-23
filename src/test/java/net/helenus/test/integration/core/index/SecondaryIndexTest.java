@@ -15,6 +15,7 @@
  */
 package net.helenus.test.integration.core.index;
 
+import java.util.concurrent.TimeoutException;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.core.Query;
@@ -36,7 +37,7 @@ public class SecondaryIndexTest extends AbstractEmbeddedCassandraTest {
   }
 
   @Test
-  public void test() throws Exception {
+  public void test() throws TimeoutException {
 
     session
         .insert()

@@ -25,6 +25,7 @@ import net.helenus.core.HelenusSession;
 import net.helenus.core.UnitOfWork;
 import net.helenus.core.annotation.Cacheable;
 import net.helenus.mapping.annotation.Column;
+import net.helenus.mapping.annotation.Index;
 import net.helenus.mapping.annotation.PartitionKey;
 import net.helenus.mapping.annotation.Table;
 import net.helenus.test.integration.build.AbstractEmbeddedCassandraTest;
@@ -39,6 +40,7 @@ interface Widget {
   UUID id();
 
   @Column
+  @Index
   String name();
 }
 
@@ -55,7 +57,7 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
 
   @Test
   public void testSelectAfterSelect() throws Exception {
-    Widget w1, w2;
+    Widget w1, w2, w3;
     UUID key = UUIDs.timeBased();
 
     // This should inserted Widget, but not cache it.
@@ -67,13 +69,15 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
 
     try (UnitOfWork uow = session.begin()) {
 
+      uow.setPurpose("testSelectAfterSelect");
+
       // This should read from the database and return a Widget.
       w1 =
           session.<Widget>select(widget).where(widget::id, eq(key)).single().sync(uow).orElse(null);
 
       // This should read from the cache and get the same instance of a Widget.
       w2 =
-          session.<Widget>select(widget).where(widget::id, eq(key)).single().sync(uow).orElse(null);
+              session.<Widget>select(widget).where(widget::id, eq(key)).single().sync(uow).orElse(null);
 
       uow.commit()
           .andThen(
@@ -81,6 +85,9 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
                 Assert.assertEquals(w1, w2);
               });
     }
+
+    w3 = session.<Widget>select(widget).where(widget::name, eq(w1.name())).single().sync().orElse(null);
+    Assert.assertEquals(w1, w3);
   }
 
   @Test
@@ -141,6 +148,46 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               });
     }
   }
+
+  @Test
+  public void testSelectViaIndexAfterSelect() throws Exception {
+    Widget w1, w2;
+    UUID key = UUIDs.timeBased();
+
+    try (UnitOfWork uow = session.begin()) {
+      // This should insert and cache Widget in the uow.
+      session
+          .<Widget>insert(widget)
+          .value(widget::id, key)
+          .value(widget::name, RandomString.make(20))
+          .sync(uow);
+
+      // This should read from the database and return a Widget.
+      w1 =
+          session
+                  .<Widget>select(widget)
+                  .where(widget::id, eq(key))
+                  .single()
+                  .sync(uow)
+                  .orElse(null);
+
+      // This should read from the cache and get the same instance of a Widget.
+      w2 =
+          session
+              .<Widget>select(widget)
+              .where(widget::name, eq(w1.name()))
+              .single()
+              .sync(uow)
+              .orElse(null);
+
+      uow.commit()
+          .andThen(
+              () -> {
+                Assert.assertEquals(w1, w2);
+              });
+    }
+  }
+
   /*
       @Test
       public void testSelectAfterInsertProperlyCachesEntity() throws Exception {

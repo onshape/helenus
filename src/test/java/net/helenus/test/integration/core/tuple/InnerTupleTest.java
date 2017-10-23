@@ -15,6 +15,7 @@
  */
 package net.helenus.test.integration.core.tuple;
 
+import java.util.concurrent.TimeoutException;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.core.Query;
@@ -41,7 +42,7 @@ public class InnerTupleTest extends AbstractEmbeddedCassandraTest {
   }
 
   @Test
-  public void testCruid() {
+  public void testCruid() throws TimeoutException {
 
     Photo photo =
         new Photo() {

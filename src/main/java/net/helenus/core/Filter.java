@@ -15,97 +15,102 @@
  */
 package net.helenus.core;
 
-import com.datastax.driver.core.querybuilder.Clause;
 import java.util.Objects;
+
+import com.datastax.driver.core.querybuilder.Clause;
+
 import net.helenus.core.reflect.HelenusPropertyNode;
 import net.helenus.mapping.MappingUtil;
 import net.helenus.mapping.value.ColumnValuePreparer;
 
 public final class Filter<V> {
 
-  private final HelenusPropertyNode node;
-  private final Postulate<V> postulate;
+	private final HelenusPropertyNode node;
+	private final Postulate<V> postulate;
 
-  private Filter(HelenusPropertyNode node, Postulate<V> postulate) {
-    this.node = node;
-    this.postulate = postulate;
-  }
+	private Filter(HelenusPropertyNode node, Postulate<V> postulate) {
+		this.node = node;
+		this.postulate = postulate;
+	}
 
-  public HelenusPropertyNode getNode() {
-    return node;
-  }
+	public static <V> Filter<V> equal(Getter<V> getter, V val) {
+		return create(getter, Operator.EQ, val);
+	}
 
-  public Clause getClause(ColumnValuePreparer valuePreparer) {
-    return postulate.getClause(node, valuePreparer);
-  }
+	public static <V> Filter<V> in(Getter<V> getter, V... vals) {
+		Objects.requireNonNull(getter, "empty getter");
+		Objects.requireNonNull(vals, "empty values");
 
-  public static <V> Filter<V> equal(Getter<V> getter, V val) {
-    return create(getter, Operator.EQ, val);
-  }
+		if (vals.length == 0) {
+			throw new IllegalArgumentException("values array is empty");
+		}
 
-  public static <V> Filter<V> in(Getter<V> getter, V... vals) {
-    Objects.requireNonNull(getter, "empty getter");
-    Objects.requireNonNull(vals, "empty values");
+		for (int i = 0; i != vals.length; ++i) {
+			Objects.requireNonNull(vals[i], "value[" + i + "] is empty");
+		}
 
-    if (vals.length == 0) {
-      throw new IllegalArgumentException("values array is empty");
-    }
+		HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
 
-    for (int i = 0; i != vals.length; ++i) {
-      Objects.requireNonNull(vals[i], "value[" + i + "] is empty");
-    }
+		Postulate<V> postulate = Postulate.of(Operator.IN, vals);
 
-    HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
+		return new Filter<V>(node, postulate);
+	}
 
-    Postulate<V> postulate = Postulate.of(Operator.IN, vals);
+	public static <V> Filter<V> greaterThan(Getter<V> getter, V val) {
+		return create(getter, Operator.GT, val);
+	}
 
-    return new Filter<V>(node, postulate);
-  }
+	public static <V> Filter<V> lessThan(Getter<V> getter, V val) {
+		return create(getter, Operator.LT, val);
+	}
 
-  public static <V> Filter<V> greaterThan(Getter<V> getter, V val) {
-    return create(getter, Operator.GT, val);
-  }
+	public static <V> Filter<V> greaterThanOrEqual(Getter<V> getter, V val) {
+		return create(getter, Operator.GTE, val);
+	}
 
-  public static <V> Filter<V> lessThan(Getter<V> getter, V val) {
-    return create(getter, Operator.LT, val);
-  }
+	public static <V> Filter<V> lessThanOrEqual(Getter<V> getter, V val) {
+		return create(getter, Operator.LTE, val);
+	}
 
-  public static <V> Filter<V> greaterThanOrEqual(Getter<V> getter, V val) {
-    return create(getter, Operator.GTE, val);
-  }
+	public static <V> Filter<V> create(Getter<V> getter, Postulate<V> postulate) {
+		Objects.requireNonNull(getter, "empty getter");
+		Objects.requireNonNull(postulate, "empty operator");
 
-  public static <V> Filter<V> lessThanOrEqual(Getter<V> getter, V val) {
-    return create(getter, Operator.LTE, val);
-  }
+		HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
 
-  public static <V> Filter<V> create(Getter<V> getter, Postulate<V> postulate) {
-    Objects.requireNonNull(getter, "empty getter");
-    Objects.requireNonNull(postulate, "empty operator");
+		return new Filter<V>(node, postulate);
+	}
 
-    HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
+	public static <V> Filter<V> create(Getter<V> getter, Operator op, V val) {
+		Objects.requireNonNull(getter, "empty getter");
+		Objects.requireNonNull(op, "empty op");
+		Objects.requireNonNull(val, "empty value");
 
-    return new Filter<V>(node, postulate);
-  }
+		if (op == Operator.IN) {
+			throw new IllegalArgumentException("invalid usage of the 'in' operator, use Filter.in() static method");
+		}
 
-  public static <V> Filter<V> create(Getter<V> getter, Operator op, V val) {
-    Objects.requireNonNull(getter, "empty getter");
-    Objects.requireNonNull(op, "empty op");
-    Objects.requireNonNull(val, "empty value");
+		HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
 
-    if (op == Operator.IN) {
-      throw new IllegalArgumentException(
-          "invalid usage of the 'in' operator, use Filter.in() static method");
-    }
+		Postulate<V> postulate = Postulate.of(op, val);
 
-    HelenusPropertyNode node = MappingUtil.resolveMappingProperty(getter);
+		return new Filter<V>(node, postulate);
+	}
 
-    Postulate<V> postulate = Postulate.of(op, val);
+	public HelenusPropertyNode getNode() {
+		return node;
+	}
 
-    return new Filter<V>(node, postulate);
-  }
+	public Clause getClause(ColumnValuePreparer valuePreparer) {
+		return postulate.getClause(node, valuePreparer);
+	}
 
-  @Override
-  public String toString() {
-    return node.getColumnName() + postulate.toString();
-  }
+	public V[] postulateValues() {
+		return postulate.values();
+	}
+
+	@Override
+	public String toString() {
+		return node.getColumnName() + postulate.toString();
+	}
 }

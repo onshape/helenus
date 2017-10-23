@@ -17,34 +17,36 @@ package net.helenus.mapping.validator;
 
 import javax.validation.ConstraintValidator;
 import javax.validation.ConstraintValidatorContext;
+
 import net.helenus.mapping.annotation.Constraints;
 
 public class NumberValidator implements ConstraintValidator<Constraints.Number, CharSequence> {
 
-  @Override
-  public void initialize(Constraints.Number constraintAnnotation) {}
+	private static boolean isNumber(char ch) {
+		return ch >= '0' && ch <= '9';
+	}
 
-  @Override
-  public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+	@Override
+	public void initialize(Constraints.Number constraintAnnotation) {
+	}
 
-    if (value == null) {
-      return true;
-    }
+	@Override
+	public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
 
-    final int len = value.length();
-    for (int i = 0; i != len; ++i) {
+		if (value == null) {
+			return true;
+		}
 
-      char ch = value.charAt(i);
+		final int len = value.length();
+		for (int i = 0; i != len; ++i) {
 
-      if (!isNumber(ch)) {
-        return false;
-      }
-    }
+			char ch = value.charAt(i);
 
-    return true;
-  }
+			if (!isNumber(ch)) {
+				return false;
+			}
+		}
 
-  private static boolean isNumber(char ch) {
-    return ch >= '0' && ch <= '9';
-  }
+		return true;
+	}
 }

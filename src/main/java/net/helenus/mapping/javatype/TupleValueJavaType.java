@@ -15,16 +15,18 @@
  */
 package net.helenus.mapping.javatype;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.Metadata;
-import com.datastax.driver.core.TupleType;
-import com.datastax.driver.core.TupleValue;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.Metadata;
+import com.datastax.driver.core.TupleType;
+import com.datastax.driver.core.TupleValue;
+
 import net.helenus.core.Helenus;
 import net.helenus.core.SessionRepository;
 import net.helenus.mapping.ColumnType;
@@ -41,112 +43,94 @@ import net.helenus.support.HelenusMappingException;
 
 public final class TupleValueJavaType extends AbstractJavaType {
 
-  @Override
-  public Class<?> getJavaClass() {
-    return TupleValue.class;
-  }
+	public static TupleType toTupleType(Class<?> javaType, Metadata metadata) {
+		HelenusEntity tupleEntity = Helenus.entity(javaType, metadata);
 
-  @Override
-  public boolean isApplicable(Class<?> javaClass) {
-    return MappingUtil.isTuple(javaClass);
-  }
+		List<DataType> tupleTypes = tupleEntity.getOrderedProperties().stream().map(p -> p.getDataType())
+				.filter(d -> d instanceof DTDataType).map(d -> (DTDataType) d).map(d -> d.getDataType())
+				.collect(Collectors.toList());
 
-  @Override
-  public AbstractDataType resolveDataType(
-      Method getter, Type genericJavaType, ColumnType columnType, Metadata metadata) {
+		if (tupleTypes.size() < tupleEntity.getOrderedProperties().size()) {
 
-    Class<?> javaType = (Class<?>) genericJavaType;
+			List<IdentityName> wrongColumns = tupleEntity.getOrderedProperties().stream()
+					.filter(p -> !(p.getDataType() instanceof DTDataType)).map(p -> p.getColumnName())
+					.collect(Collectors.toList());
 
-    if (TupleValue.class.isAssignableFrom(javaType)) {
+			throw new HelenusMappingException(
+					"non simple types in tuple " + tupleEntity.getMappingInterface() + " in columns: " + wrongColumns);
+		}
 
-      Types.Tuple tuple = getter.getDeclaredAnnotation(Types.Tuple.class);
-      if (tuple == null) {
-        throw new HelenusMappingException(
-            "tuple must be annotated by @Tuple annotation in " + getter);
-      }
+		return metadata.newTupleType(tupleTypes.toArray(new DataType[tupleTypes.size()]));
+	}
 
-      DataType.Name[] tupleArguments = tuple.value();
-      int len = tupleArguments.length;
-      DataType[] arguments = new DataType[len];
+	@Override
+	public Class<?> getJavaClass() {
+		return TupleValue.class;
+	}
 
-      for (int i = 0; i != len; ++i) {
-        arguments[i] = resolveSimpleType(getter, tupleArguments[i]);
-      }
+	@Override
+	public boolean isApplicable(Class<?> javaClass) {
+		return MappingUtil.isTuple(javaClass);
+	}
 
-      TupleType tupleType = metadata.newTupleType(arguments);
-      return new DTDataType(columnType, tupleType, javaType);
+	@Override
+	public AbstractDataType resolveDataType(Method getter, Type genericJavaType, ColumnType columnType,
+			Metadata metadata) {
 
-    } else {
-      return new DTDataType(columnType, toTupleType(javaType, metadata), javaType);
-    }
-  }
+		Class<?> javaType = (Class<?>) genericJavaType;
 
-  public static TupleType toTupleType(Class<?> javaType, Metadata metadata) {
-    HelenusEntity tupleEntity = Helenus.entity(javaType, metadata);
+		if (TupleValue.class.isAssignableFrom(javaType)) {
 
-    List<DataType> tupleTypes =
-        tupleEntity
-            .getOrderedProperties()
-            .stream()
-            .map(p -> p.getDataType())
-            .filter(d -> d instanceof DTDataType)
-            .map(d -> (DTDataType) d)
-            .map(d -> d.getDataType())
-            .collect(Collectors.toList());
+			Types.Tuple tuple = getter.getDeclaredAnnotation(Types.Tuple.class);
+			if (tuple == null) {
+				throw new HelenusMappingException("tuple must be annotated by @Tuple annotation in " + getter);
+			}
 
-    if (tupleTypes.size() < tupleEntity.getOrderedProperties().size()) {
+			DataType.Name[] tupleArguments = tuple.value();
+			int len = tupleArguments.length;
+			DataType[] arguments = new DataType[len];
 
-      List<IdentityName> wrongColumns =
-          tupleEntity
-              .getOrderedProperties()
-              .stream()
-              .filter(p -> !(p.getDataType() instanceof DTDataType))
-              .map(p -> p.getColumnName())
-              .collect(Collectors.toList());
+			for (int i = 0; i != len; ++i) {
+				arguments[i] = resolveSimpleType(getter, tupleArguments[i]);
+			}
 
-      throw new HelenusMappingException(
-          "non simple types in tuple "
-              + tupleEntity.getMappingInterface()
-              + " in columns: "
-              + wrongColumns);
-    }
+			TupleType tupleType = metadata.newTupleType(arguments);
+			return new DTDataType(columnType, tupleType, javaType);
 
-    return metadata.newTupleType(tupleTypes.toArray(new DataType[tupleTypes.size()]));
-  }
+		} else {
+			return new DTDataType(columnType, toTupleType(javaType, metadata), javaType);
+		}
+	}
 
-  @Override
-  public Optional<Function<Object, Object>> resolveReadConverter(
-      AbstractDataType dataType, SessionRepository repository) {
+	@Override
+	public Optional<Function<Object, Object>> resolveReadConverter(AbstractDataType dataType,
+			SessionRepository repository) {
 
-    DTDataType dt = (DTDataType) dataType;
+		DTDataType dt = (DTDataType) dataType;
 
-    Class<Object> javaClass = (Class<Object>) dt.getJavaClass();
+		Class<Object> javaClass = (Class<Object>) dt.getJavaClass();
 
-    if (TupleValue.class.isAssignableFrom(javaClass)) {
-      return Optional.empty();
-    }
+		if (TupleValue.class.isAssignableFrom(javaClass)) {
+			return Optional.empty();
+		}
 
-    return Optional.of(
-        TypedConverter.create(
-            TupleValue.class, javaClass, new TupleValueToEntityConverter(javaClass, repository)));
-  }
+		return Optional.of(TypedConverter.create(TupleValue.class, javaClass,
+				new TupleValueToEntityConverter(javaClass, repository)));
+	}
 
-  @Override
-  public Optional<Function<Object, Object>> resolveWriteConverter(
-      AbstractDataType dataType, SessionRepository repository) {
+	@Override
+	public Optional<Function<Object, Object>> resolveWriteConverter(AbstractDataType dataType,
+			SessionRepository repository) {
 
-    DTDataType dt = (DTDataType) dataType;
+		DTDataType dt = (DTDataType) dataType;
 
-    Class<Object> javaClass = (Class<Object>) dt.getJavaClass();
+		Class<Object> javaClass = (Class<Object>) dt.getJavaClass();
 
-    if (TupleValue.class.isAssignableFrom(javaClass)) {
-      return Optional.empty();
-    }
+		if (TupleValue.class.isAssignableFrom(javaClass)) {
+			return Optional.empty();
+		}
 
-    return Optional.of(
-        TypedConverter.create(
-            javaClass,
-            TupleValue.class,
-            new EntityToTupleValueConverter(javaClass, (TupleType) dt.getDataType(), repository)));
-  }
+		return Optional.of(TypedConverter.create(javaClass, TupleValue.class,
+				new EntityToTupleValueConverter(javaClass, (TupleType) dt.getDataType(), repository)));
+	}
 }
