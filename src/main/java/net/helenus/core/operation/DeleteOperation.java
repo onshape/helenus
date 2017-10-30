@@ -15,6 +15,9 @@
  */
 package net.helenus.core.operation;
 
+import java.util.List;
+import java.util.concurrent.TimeoutException;
+
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.querybuilder.BuiltStatement;
 import com.datastax.driver.core.querybuilder.Delete;
@@ -23,6 +26,8 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 
 import net.helenus.core.AbstractSessionOperations;
 import net.helenus.core.Filter;
+import net.helenus.core.UnitOfWork;
+import net.helenus.core.cache.Facet;
 import net.helenus.core.reflect.HelenusPropertyNode;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.support.HelenusMappingException;
@@ -122,4 +127,33 @@ public final class DeleteOperation extends AbstractFilterOperation<ResultSet, De
 					+ entity.getMappingInterface() + " or " + p.getEntity().getMappingInterface());
 		}
 	}
+
+	public List<Facet> bindFacetValues() {
+		return bindFacetValues(getFacets());
+	}
+
+	@Override
+	public ResultSet sync() throws TimeoutException {
+		ResultSet result = super.sync();
+		if (entity.isCacheable()) {
+			sessionOps.cacheEvict(bindFacetValues());
+		}
+		return result;
+	}
+
+	@Override
+	public ResultSet sync(UnitOfWork uow) throws TimeoutException {
+		if (uow == null) {
+			return sync();
+		}
+		ResultSet result = super.sync(uow);
+		uow.cacheEvict(bindFacetValues());
+		return result;
+	}
+
+	@Override
+	public List<Facet> getFacets() {
+		return entity.getFacets();
+	}
+
 }

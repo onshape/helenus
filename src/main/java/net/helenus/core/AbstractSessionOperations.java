@@ -24,14 +24,16 @@ import org.slf4j.LoggerFactory;
 
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
-import com.datastax.driver.core.querybuilder.BuiltStatement;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.Table;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import brave.Tracer;
 import net.helenus.core.cache.Facet;
+import net.helenus.core.operation.Operation;
 import net.helenus.mapping.value.ColumnValuePreparer;
 import net.helenus.mapping.value.ColumnValueProvider;
+import net.helenus.support.Either;
 import net.helenus.support.HelenusException;
 
 public abstract class AbstractSessionOperations {
@@ -60,7 +62,7 @@ public abstract class AbstractSessionOperations {
 
 	public PreparedStatement prepare(RegularStatement statement) {
 		try {
-			log(statement, false);
+			logStatement(statement, false);
 			return currentSession().prepare(statement);
 		} catch (RuntimeException e) {
 			throw translateException(e);
@@ -69,7 +71,7 @@ public abstract class AbstractSessionOperations {
 
 	public ListenableFuture<PreparedStatement> prepareAsync(RegularStatement statement) {
 		try {
-			log(statement, false);
+			logStatement(statement, false);
 			return currentSession().prepareAsync(statement);
 		} catch (RuntimeException e) {
 			throw translateException(e);
@@ -77,37 +79,47 @@ public abstract class AbstractSessionOperations {
 	}
 
 	public ResultSet execute(Statement statement, boolean showValues) {
-		return executeAsync(statement, showValues).getUninterruptibly();
+		return execute(statement, null, null, showValues);
+	}
+
+	public ResultSet execute(Statement statement, Stopwatch timer, boolean showValues) {
+		return execute(statement, null, timer, showValues);
+	}
+
+	public ResultSet execute(Statement statement, UnitOfWork uow, boolean showValues) {
+		return execute(statement, uow, null, showValues);
+	}
+
+	public ResultSet execute(Statement statement, UnitOfWork uow, Stopwatch timer, boolean showValues) {
+		return executeAsync(statement, uow, timer, showValues).getUninterruptibly();
 	}
 
 	public ResultSetFuture executeAsync(Statement statement, boolean showValues) {
+		return executeAsync(statement, null, null, showValues);
+	}
+
+	public ResultSetFuture executeAsync(Statement statement, Stopwatch timer, boolean showValues) {
+		return executeAsync(statement, null, timer, showValues);
+	}
+
+	public ResultSetFuture executeAsync(Statement statement, UnitOfWork uow, boolean showValues) {
+		return executeAsync(statement, uow, null, showValues);
+	}
+
+	public ResultSetFuture executeAsync(Statement statement, UnitOfWork uow, Stopwatch timer, boolean showValues) {
 		try {
-			log(statement, showValues);
+			logStatement(statement, showValues);
 			return currentSession().executeAsync(statement);
 		} catch (RuntimeException e) {
 			throw translateException(e);
 		}
 	}
 
-	void log(Statement statement, boolean showValues) {
-		if (LOG.isInfoEnabled()) {
-			LOG.info("Execute statement " + statement);
-		}
+	private void logStatement(Statement statement, boolean showValues) {
 		if (isShowCql()) {
-			if (statement instanceof BuiltStatement) {
-				BuiltStatement builtStatement = (BuiltStatement) statement;
-				if (showValues) {
-					RegularStatement regularStatement = builtStatement.setForceNoValues(true);
-					printCql(regularStatement.getQueryString());
-				} else {
-					printCql(builtStatement.getQueryString());
-				}
-			} else if (statement instanceof RegularStatement) {
-				RegularStatement regularStatement = (RegularStatement) statement;
-				printCql(regularStatement.getQueryString());
-			} else {
-				printCql(statement.toString());
-			}
+			printCql(Operation.queryString(statement, showValues));
+		} else if (LOG.isInfoEnabled()) {
+			LOG.info("CQL> " + Operation.queryString(statement, showValues));
 		}
 	}
 
@@ -119,7 +131,7 @@ public abstract class AbstractSessionOperations {
 		return null;
 	}
 
-	public void mergeCache(Table<String, String, Object> cache) {
+	public void mergeCache(Table<String, String, Either<Object, List<Facet>>> uowCache) {
 	}
 
 	RuntimeException translateException(RuntimeException e) {
@@ -138,5 +150,8 @@ public abstract class AbstractSessionOperations {
 
 	void printCql(String cql) {
 		getPrintStream().println(cql);
+	}
+
+	public void cacheEvict(List<Facet> facets) {
 	}
 }

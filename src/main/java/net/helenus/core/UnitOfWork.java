@@ -25,8 +25,8 @@ import net.helenus.core.cache.Facet;
 public interface UnitOfWork<X extends Exception> extends AutoCloseable {
 
 	/**
-	 * Marks the beginning of a transactional section of work. Will write a record
-	 * to the shared write-ahead log.
+	 * Marks the beginning of a transactional section of work. Will write a
+	 * recordCacheAndDatabaseOperationCount to the shared write-ahead log.
 	 *
 	 * @return the handle used to commit or abort the work.
 	 */
@@ -59,10 +59,15 @@ public interface UnitOfWork<X extends Exception> extends AutoCloseable {
 
 	void cacheUpdate(Object pojo, List<Facet> facets);
 
+	List<Facet> cacheEvict(List<Facet> facets);
+
+	String getPurpose();
 	UnitOfWork setPurpose(String purpose);
 
-	Stopwatch getExecutionTimer();
+	void addDatabaseTime(String name, Stopwatch amount);
+	void addCacheLookupTime(Stopwatch amount);
 
-	Stopwatch getCacheLookupTimer();
+	// Cache > 0 means "cache hit", < 0 means cache miss.
+	void recordCacheAndDatabaseOperationCount(int cache, int database);
 
 }

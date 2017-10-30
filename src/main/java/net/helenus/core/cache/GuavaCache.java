@@ -13,25 +13,32 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.test.integration.core.tuple;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.TupleValue;
+package net.helenus.core.cache;
 
-import net.helenus.mapping.annotation.Column;
-import net.helenus.mapping.annotation.PartitionKey;
-import net.helenus.mapping.annotation.Table;
-import net.helenus.mapping.annotation.Types;
+import com.google.common.cache.Cache;
 
-@Table
-public interface Album {
+public class GuavaCache<K, V> implements SessionCache<K, V> {
 
-	@PartitionKey(ordinal = 1)
-	int id();
+	final Cache<K, V> cache;
 
-	AlbumInformation info();
+	GuavaCache(Cache<K, V> cache) {
+		this.cache = cache;
+	}
 
-	@Types.Tuple({DataType.Name.TEXT, DataType.Name.TEXT})
-	@Column(ordinal = 1)
-	TupleValue infoNoMapping();
+	@Override
+	public void invalidate(K key) {
+		cache.invalidate(key);
+	}
+
+	@Override
+	public V get(K key) {
+		return cache.getIfPresent(key);
+	}
+
+	@Override
+	public void put(K key, V value) {
+		cache.put(key, value);
+	}
+
 }

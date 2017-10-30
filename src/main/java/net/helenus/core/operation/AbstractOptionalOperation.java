@@ -15,9 +15,13 @@
  */
 package net.helenus.core.operation;
 
+import static net.helenus.core.HelenusSession.deleted;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeoutException;
 
 import com.codahale.metrics.Timer;
 import com.datastax.driver.core.PreparedStatement;
@@ -57,20 +61,25 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 				});
 	}
 
-	public Optional<E> sync() {// throws TimeoutException {
+	public Optional<E> sync() throws TimeoutException {
 		final Timer.Context context = requestLatency.time();
 		try {
 			Optional<E> result = Optional.empty();
 			E cacheResult = null;
-			boolean updateCache = isSessionCacheable();
+			boolean updateCache = isSessionCacheable() && checkCache;
 
-			if (enableCache && isSessionCacheable()) {
+			if (checkCache && isSessionCacheable()) {
 				List<Facet> facets = bindFacetValues();
 				String tableName = CacheUtil.schemaName(facets);
 				cacheResult = (E) sessionOps.checkCache(tableName, facets);
 				if (cacheResult != null) {
 					result = Optional.of(cacheResult);
 					updateCache = false;
+					sessionCacheHits.mark();
+					cacheHits.mark();
+				} else {
+					sessionCacheMiss.mark();
+					cacheMiss.mark();
 				}
 			}
 
@@ -95,7 +104,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 		}
 	}
 
-	public Optional<E> sync(UnitOfWork<?> uow) {// throws TimeoutException {
+	public Optional<E> sync(UnitOfWork<?> uow) throws TimeoutException {
 		if (uow == null)
 			return sync();
 
@@ -103,30 +112,59 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 		try {
 
 			Optional<E> result = Optional.empty();
-			E cacheResult = null;
-			boolean updateCache = true;
+			E cachedResult = null;
+			final boolean updateCache;
 
-			if (enableCache) {
-				Stopwatch timer = uow.getCacheLookupTimer();
-				timer.start();
-				List<Facet> facets = bindFacetValues();
-				cacheResult = checkCache(uow, facets);
-				if (cacheResult != null) {
-					result = Optional.of(cacheResult);
-					updateCache = false;
-				} else {
-					if (isSessionCacheable()) {
-						String tableName = CacheUtil.schemaName(facets);
-						cacheResult = (E) sessionOps.checkCache(tableName, facets);
-						if (cacheResult != null) {
-							result = Optional.of(cacheResult);
+			if (checkCache) {
+				Stopwatch timer = Stopwatch.createStarted();
+				try {
+					List<Facet> facets = bindFacetValues();
+					if (facets != null) {
+						cachedResult = checkCache(uow, facets);
+						if (cachedResult != null) {
+							updateCache = false;
+							result = Optional.of(cachedResult);
+							uowCacheHits.mark();
+							cacheHits.mark();
+							uow.recordCacheAndDatabaseOperationCount(1, 0);
+						} else {
+							updateCache = true;
+							uowCacheMiss.mark();
+							if (isSessionCacheable()) {
+								String tableName = CacheUtil.schemaName(facets);
+								cachedResult = (E) sessionOps.checkCache(tableName, facets);
+								if (cachedResult != null) {
+									result = Optional.of(cachedResult);
+									sessionCacheHits.mark();
+									cacheHits.mark();
+									uow.recordCacheAndDatabaseOperationCount(1, 0);
+								} else {
+									sessionCacheMiss.mark();
+									cacheMiss.mark();
+									uow.recordCacheAndDatabaseOperationCount(-1, 0);
+								}
+							}
 						}
+					} else {
+						updateCache = false;
 					}
+				} finally {
+					timer.stop();
+					uow.addCacheLookupTime(timer);
 				}
-				timer.stop();
+			} else {
+				updateCache = false;
 			}
 
-			if (!result.isPresent()) {
+			// Check to see if we fetched the object from the cache
+			if (result.isPresent()) {
+				// If we fetched the `deleted` object then the result is null (really
+				// Optional.empty()).
+				if (result.get() == deleted) {
+					result = Optional.empty();
+				}
+			} else {
+
 				// Formulate the query and execute it against the Cassandra cluster.
 				ResultSet resultSet = execute(sessionOps, uow, traceContext, queryExecutionTimeout, queryTimeoutUnits,
 						showValues, true);
@@ -136,10 +174,9 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 			}
 
 			// If we have a result, it wasn't from the UOW cache, and we're caching things
-			// then we
-			// need to put this result into the cache for future requests to find.
-			if (updateCache && result.isPresent()) {
-				updateCache(uow, result.get(), getFacets());
+			// then we need to put this result into the cache for future requests to find.
+			if (updateCache && result.isPresent() && result.get() != deleted) {
+				cacheUpdate(uow, result.get(), getFacets());
 			}
 
 			return result;
@@ -150,11 +187,11 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 
 	public CompletableFuture<Optional<E>> async() {
 		return CompletableFuture.<Optional<E>>supplyAsync(() -> {
-			// try {
-			return sync();
-			// } catch (TimeoutException ex) {
-			// throw new CompletionException(ex);
-			// }
+			try {
+				return sync();
+			} catch (TimeoutException ex) {
+				throw new CompletionException(ex);
+			}
 		});
 	}
 
@@ -162,11 +199,11 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 		if (uow == null)
 			return async();
 		return CompletableFuture.<Optional<E>>supplyAsync(() -> {
-			// try {
-			return sync();
-			// } catch (TimeoutException ex) {
-			// throw new CompletionException(ex);
-			// }
+			try {
+				return sync();
+			} catch (TimeoutException ex) {
+				throw new CompletionException(ex);
+			}
 		});
 	}
 }

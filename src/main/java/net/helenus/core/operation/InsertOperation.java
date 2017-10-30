@@ -16,6 +16,7 @@
 package net.helenus.core.operation;
 
 import java.util.*;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 import com.datastax.driver.core.ResultSet;
@@ -27,6 +28,7 @@ import net.helenus.core.AbstractSessionOperations;
 import net.helenus.core.Getter;
 import net.helenus.core.Helenus;
 import net.helenus.core.UnitOfWork;
+import net.helenus.core.cache.Facet;
 import net.helenus.core.reflect.DefaultPrimitiveTypes;
 import net.helenus.core.reflect.Drafted;
 import net.helenus.core.reflect.HelenusPropertyNode;
@@ -235,15 +237,38 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
 	}
 
 	@Override
-	public T sync(UnitOfWork uow) {// throws TimeoutException {
+	public T sync() throws TimeoutException {
+		T result = super.sync();
+		if (entity.isCacheable() && result != null) {
+			sessionOps.updateCache(result, entity.getFacets());
+		}
+		return result;
+	}
+
+	@Override
+	public T sync(UnitOfWork uow) throws TimeoutException {
 		if (uow == null) {
 			return sync();
 		}
 		T result = super.sync(uow);
 		Class<?> iface = entity.getMappingInterface();
 		if (resultType == iface) {
-			updateCache(uow, result, entity.getFacets());
+			cacheUpdate(uow, result, entity.getFacets());
+		} else {
+			if (entity.isCacheable()) {
+				sessionOps.cacheEvict(bindFacetValues());
+			}
 		}
 		return result;
 	}
+
+	@Override
+	public List<Facet> getFacets() {
+		if (entity != null) {
+			return entity.getFacets();
+		} else {
+			return new ArrayList<Facet>();
+		}
+	}
+
 }

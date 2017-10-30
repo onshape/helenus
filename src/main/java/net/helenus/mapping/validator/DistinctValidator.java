@@ -13,25 +13,23 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.test.integration.core.tuple;
+package net.helenus.mapping.validator;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.TupleValue;
+import javax.validation.ConstraintValidator;
+import javax.validation.ConstraintValidatorContext;
 
-import net.helenus.mapping.annotation.Column;
-import net.helenus.mapping.annotation.PartitionKey;
-import net.helenus.mapping.annotation.Table;
-import net.helenus.mapping.annotation.Types;
+import net.helenus.mapping.annotation.Constraints;
 
-@Table
-public interface Album {
+public final class DistinctValidator implements ConstraintValidator<Constraints.Distinct, CharSequence> {
 
-	@PartitionKey(ordinal = 1)
-	int id();
+	@Override
+	public void initialize(Constraints.Distinct constraintAnnotation) {
+	}
 
-	AlbumInformation info();
-
-	@Types.Tuple({DataType.Name.TEXT, DataType.Name.TEXT})
-	@Column(ordinal = 1)
-	TupleValue infoNoMapping();
+	@Override
+	public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+		// TODO(gburd): if there is an Enum type supplied, check that value is valid
+		// Enum.name()
+		return true;
+	}
 }

@@ -252,4 +252,29 @@ public final class Constraints {
 		 */
 		int flags();
 	}
+
+	/**
+	 * Distinct annotation is used to signal, but not ensure that a value should be
+	 * distinct in the database.
+	 *
+	 * <p>
+	 * Can be used only for @java.lang.CharSequence
+	 *
+	 * <p>
+	 * It does not have effect on selects and data retrieval operations
+	 */
+	@Documented
+	@Retention(RetentionPolicy.RUNTIME)
+	@Target(value = {ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+	@Constraint(validatedBy = DistinctValidator.class)
+	public @interface Distinct {
+
+		/**
+		 * User defined Enum to further restrict the items in the set.
+		 *
+		 * @return Java
+		 */
+		Class<? extends Enum> value() default Enum.class;
+
+	}
 }

@@ -13,25 +13,24 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.test.integration.core.tuple;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.TupleValue;
+package net.helenus.core.cache;
 
-import net.helenus.mapping.annotation.Column;
-import net.helenus.mapping.annotation.PartitionKey;
-import net.helenus.mapping.annotation.Table;
-import net.helenus.mapping.annotation.Types;
+import java.util.concurrent.TimeUnit;
 
-@Table
-public interface Album {
+import com.google.common.cache.CacheBuilder;
 
-	@PartitionKey(ordinal = 1)
-	int id();
+public interface SessionCache<K, V> {
 
-	AlbumInformation info();
+	static <K, V> SessionCache<K, V> defaultCache() {
+		int MAX_CACHE_SIZE = 10000;
+		int MAX_CACHE_EXPIRE_SECONDS = 600;
+		return new GuavaCache<K, V>(CacheBuilder.newBuilder().maximumSize(MAX_CACHE_SIZE)
+				.expireAfterAccess(MAX_CACHE_EXPIRE_SECONDS, TimeUnit.SECONDS)
+				.expireAfterWrite(MAX_CACHE_EXPIRE_SECONDS, TimeUnit.SECONDS).recordStats().build());
+	}
 
-	@Types.Tuple({DataType.Name.TEXT, DataType.Name.TEXT})
-	@Column(ordinal = 1)
-	TupleValue infoNoMapping();
+	void invalidate(K key);
+	V get(K key);
+	void put(K key, V value);
 }

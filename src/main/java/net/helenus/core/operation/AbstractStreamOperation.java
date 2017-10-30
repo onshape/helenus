@@ -15,9 +15,13 @@
  */
 package net.helenus.core.operation;
 
+import static net.helenus.core.HelenusSession.deleted;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 import com.codahale.metrics.Timer;
@@ -58,20 +62,25 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 				});
 	}
 
-	public Stream<E> sync() {// throws TimeoutException {
+	public Stream<E> sync() throws TimeoutException {
 		final Timer.Context context = requestLatency.time();
 		try {
 			Stream<E> resultStream = null;
 			E cacheResult = null;
 			boolean updateCache = isSessionCacheable();
 
-			if (enableCache && isSessionCacheable()) {
+			if (checkCache && isSessionCacheable()) {
 				List<Facet> facets = bindFacetValues();
 				String tableName = CacheUtil.schemaName(facets);
 				cacheResult = (E) sessionOps.checkCache(tableName, facets);
 				if (cacheResult != null) {
 					resultStream = Stream.of(cacheResult);
 					updateCache = false;
+					sessionCacheHits.mark();
+					cacheHits.mark();
+				} else {
+					sessionCacheMiss.mark();
+					cacheMiss.mark();
 				}
 			}
 
@@ -102,7 +111,7 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 		}
 	}
 
-	public Stream<E> sync(UnitOfWork<?> uow) {// throws TimeoutException {
+	public Stream<E> sync(UnitOfWork uow) throws TimeoutException {
 		if (uow == null)
 			return sync();
 
@@ -110,20 +119,50 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 		try {
 			Stream<E> resultStream = null;
 			E cachedResult = null;
-			boolean updateCache = true;
+			final boolean updateCache;
 
-			if (enableCache) {
-				Stopwatch timer = uow.getCacheLookupTimer();
-				timer.start();
-				List<Facet> facets = bindFacetValues();
-				cachedResult = checkCache(uow, facets);
-				if (cachedResult != null) {
-					resultStream = Stream.of(cachedResult);
-					updateCache = false;
+			if (checkCache) {
+				Stopwatch timer = Stopwatch.createStarted();
+				try {
+					List<Facet> facets = bindFacetValues();
+					if (facets != null) {
+						cachedResult = checkCache(uow, facets);
+						if (cachedResult != null) {
+							updateCache = false;
+							resultStream = Stream.of(cachedResult);
+							uowCacheHits.mark();
+							cacheHits.mark();
+							uow.recordCacheAndDatabaseOperationCount(1, 0);
+						} else {
+							updateCache = true;
+							uowCacheMiss.mark();
+							if (isSessionCacheable()) {
+								String tableName = CacheUtil.schemaName(facets);
+								cachedResult = (E) sessionOps.checkCache(tableName, facets);
+								if (cachedResult != null) {
+									resultStream = Stream.of(cachedResult);
+									sessionCacheHits.mark();
+									cacheHits.mark();
+									uow.recordCacheAndDatabaseOperationCount(1, 0);
+								} else {
+									sessionCacheMiss.mark();
+									cacheMiss.mark();
+									uow.recordCacheAndDatabaseOperationCount(-1, 0);
+								}
+							}
+						}
+					} else {
+						updateCache = false;
+					}
+				} finally {
+					timer.stop();
+					uow.addCacheLookupTime(timer);
 				}
-				timer.stop();
+			} else {
+				updateCache = false;
 			}
 
+			// Check to see if we fetched the object from the cache
 			if (resultStream == null) {
 				ResultSet resultSet = execute(sessionOps, uow, traceContext, queryExecutionTimeout, queryTimeoutUnits,
 						showValues, true);
@@ -132,12 +171,16 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 
 			// If we have a result and we're caching then we need to put it into the cache
 			// for future requests to find.
-			if (updateCache && resultStream != null) {
+			if (resultStream != null) {
 				List<E> again = new ArrayList<>();
 				List<Facet> facets = getFacets();
 				resultStream.forEach(result -> {
-					updateCache(uow, result, facets);
-					again.add(result);
+					if (result != deleted) {
+						if (updateCache) {
+							cacheUpdate(uow, result, facets);
+						}
+						again.add(result);
+					}
 				});
 				resultStream = again.stream();
 			}
@@ -150,23 +193,23 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
 
 	public CompletableFuture<Stream<E>> async() {
 		return CompletableFuture.<Stream<E>>supplyAsync(() -> {
-			// try {
-			return sync();
-			// } catch (TimeoutException ex) {
-			// throw new CompletionException(ex);
-			// }
+			try {
+				return sync();
+			} catch (TimeoutException ex) {
+				throw new CompletionException(ex);
+			}
 		});
 	}
 
-	public CompletableFuture<Stream<E>> async(UnitOfWork<?> uow) {
+	public CompletableFuture<Stream<E>> async(UnitOfWork uow) {
 		if (uow == null)
 			return async();
 		return CompletableFuture.<Stream<E>>supplyAsync(() -> {
-			// try {
-			return sync();
-			// } catch (TimeoutException ex) {
-			// throw new CompletionException(ex);
-			// }
+			try {
+				return sync();
+			} catch (TimeoutException ex) {
+				throw new CompletionException(ex);
+			}
 		});
 	}
 }

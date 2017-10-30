@@ -18,6 +18,8 @@ package net.helenus.mapping;
 import java.lang.reflect.Method;
 import java.util.*;
 
+import javax.validation.ConstraintValidator;
+
 import org.apache.commons.lang3.ClassUtils;
 
 import com.datastax.driver.core.DefaultMetadata;
@@ -31,6 +33,7 @@ import net.helenus.core.annotation.Cacheable;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
 import net.helenus.mapping.annotation.*;
+import net.helenus.mapping.validator.DistinctValidator;
 import net.helenus.support.HelenusMappingException;
 
 public final class HelenusMappingEntity implements HelenusEntity {
@@ -125,10 +128,12 @@ public final class HelenusMappingEntity implements HelenusEntity {
 						facetsBuilder.add(new UnboundFacet(primaryKeyProperties));
 						primaryKeyProperties = null;
 					}
-					Optional<IdentityName> optionalIndexName = prop.getIndexName();
-					if (optionalIndexName.isPresent()) {
-						UnboundFacet facet = new UnboundFacet(prop);
-						facetsBuilder.add(facet);
+					for (ConstraintValidator<?, ?> constraint : MappingUtil.getValidators(prop.getGetterMethod())) {
+						if (constraint.getClass().isAssignableFrom(DistinctValidator.class)) {
+							UnboundFacet facet = new UnboundFacet(prop);
+							facetsBuilder.add(facet);
+							break;
+						}
 					}
 			}
 		}

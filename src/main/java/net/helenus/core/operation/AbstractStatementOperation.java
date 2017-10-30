@@ -21,9 +21,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.RegularStatement;
@@ -42,14 +39,13 @@ import net.helenus.core.UnitOfWork;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
 import net.helenus.core.reflect.MapExportable;
+import net.helenus.mapping.HelenusProperty;
 import net.helenus.mapping.value.BeanColumnValueProvider;
 import net.helenus.support.HelenusException;
 
 public abstract class AbstractStatementOperation<E, O extends AbstractStatementOperation<E, O>> extends Operation<E> {
 
-	private static final Logger LOG = LoggerFactory.getLogger(AbstractStatementOperation.class);
-
-	protected boolean enableCache = true;
+	protected boolean checkCache = true;
 	protected boolean showValues = true;
 	protected TraceContext traceContext;
 	long queryExecutionTimeout = 10;
@@ -70,13 +66,13 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
 
 	public abstract Statement buildStatement(boolean cached);
 
-	public O ignoreCache(boolean enabled) {
-		enableCache = enabled;
+	public O uncached(boolean enabled) {
+		checkCache = enabled;
 		return (O) this;
 	}
 
-	public O ignoreCache() {
-		enableCache = true;
+	public O uncached() {
+		checkCache = false;
 		return (O) this;
 	}
 
@@ -326,21 +322,14 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
 		if (!facets.isEmpty()) {
 			optionalCachedResult = uow.cacheLookup(facets);
 			if (optionalCachedResult.isPresent()) {
-				uowCacheHits.mark();
-				LOG.info("UnitOfWork({}) cache hit using facets", uow.hashCode());
 				result = (E) optionalCachedResult.get();
 			}
-		}
-
-		if (result == null) {
-			uowCacheMiss.mark();
-			LOG.info("UnitOfWork({}) cache miss", uow.hashCode());
 		}
 
 		return result;
 	}
 
-	protected void updateCache(UnitOfWork<?> uow, E pojo, List<Facet> identifyingFacets) {
+	protected void cacheUpdate(UnitOfWork<?> uow, E pojo, List<Facet> identifyingFacets) {
 		List<Facet> facets = new ArrayList<>();
 		Map<String, Object> valueMap = pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
 
@@ -348,15 +337,23 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
 			if (facet instanceof UnboundFacet) {
 				UnboundFacet unboundFacet = (UnboundFacet) facet;
 				UnboundFacet.Binder binder = unboundFacet.binder();
-				unboundFacet.getProperties().forEach(prop -> {
+				for (HelenusProperty prop : unboundFacet.getProperties()) {
+					Object value;
 					if (valueMap == null) {
-						Object value = BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop, false);
-						binder.setValueForProperty(prop, value.toString());
+						value = BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop, false);
+						if (value != null) {
+							binder.setValueForProperty(prop, value.toString());
+						}
 					} else {
-						binder.setValueForProperty(prop, valueMap.get(prop.getPropertyName()).toString());
+						value = valueMap.get(prop.getPropertyName());
+						if (value != null) {
+							binder.setValueForProperty(prop, value.toString());
+						}
 					}
+				}
+				if (binder.isBound()) {
 					facets.add(binder.bind());
-				});
+				}
 			} else {
 				facets.add(facet);
 			}

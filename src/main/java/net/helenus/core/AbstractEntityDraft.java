@@ -1,9 +1,9 @@
 package net.helenus.core;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.io.Serializable;
+import java.util.*;
+
+import org.apache.commons.lang3.SerializationUtils;
 
 import com.google.common.primitives.Primitives;
 
@@ -30,12 +30,12 @@ public abstract class AbstractEntityDraft<E> implements Drafted<E> {
 	}
 
 	@SuppressWarnings("unchecked")
-	protected <T> T get(Getter<T> getter, Class<?> returnType) {
+	public <T> T get(Getter<T> getter, Class<?> returnType) {
 		return (T) get(this.<T>methodNameFor(getter), returnType);
 	}
 
 	@SuppressWarnings("unchecked")
-	protected <T> T get(String key, Class<?> returnType) {
+	public <T> T get(String key, Class<?> returnType) {
 		T value = (T) backingMap.get(key);
 
 		if (value == null) {
@@ -51,17 +51,27 @@ public abstract class AbstractEntityDraft<E> implements Drafted<E> {
 
 					return (T) type.getDefaultValue();
 				}
+			} else {
+				// Collections fetched from the entityMap
+				if (value instanceof Collection) {
+					try {
+						value = MappingUtil.<T>clone(value);
+					} catch (CloneNotSupportedException e) {
+						// TODO(gburd): deep?shallow? copy of List, Map, Set to a mutable collection.
+						value = (T) SerializationUtils.<Serializable>clone((Serializable) value);
+					}
+				}
 			}
 		}
 
 		return value;
 	}
 
-	protected <T> Object set(Getter<T> getter, Object value) {
+	public <T> Object set(Getter<T> getter, Object value) {
 		return set(this.<T>methodNameFor(getter), value);
 	}
 
-	protected Object set(String key, Object value) {
+	public Object set(String key, Object value) {
 		if (key == null || value == null) {
 			return null;
 		}
@@ -71,11 +81,11 @@ public abstract class AbstractEntityDraft<E> implements Drafted<E> {
 	}
 
 	@SuppressWarnings("unchecked")
-	protected <T> T mutate(Getter<T> getter, T value) {
+	public <T> T mutate(Getter<T> getter, T value) {
 		return (T) mutate(this.<T>methodNameFor(getter), value);
 	}
 
-	protected Object mutate(String key, Object value) {
+	public Object mutate(String key, Object value) {
 		Objects.requireNonNull(key);
 
 		if (value == null) {
