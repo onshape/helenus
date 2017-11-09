@@ -149,4 +149,7 @@ public abstract class AbstractSessionOperations {
   }
 
   public void cacheEvict(List<Facet> facets) {}
+
+  public boolean obscureValuesInQueries() { return false; }
+
 }

@@ -72,6 +72,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   private final RowColumnValueProvider valueProvider;
   private final StatementColumnValuePreparer valuePreparer;
   private final Metadata metadata;
+  private final boolean obscureValuesInQueries;
   private volatile String usingKeyspace;
   private volatile boolean showCql;
 
@@ -80,6 +81,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
       String usingKeyspace,
       CodecRegistry registry,
       boolean showCql,
+      boolean obscureValues,
       PrintStream printStream,
       SessionRepositoryBuilder sessionRepositoryBuilder,
       Executor executor,
@@ -96,6 +98,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
         Objects.requireNonNull(
             usingKeyspace, "keyspace needs to be selected before creating session");
     this.showCql = showCql;
+    this.obscureValuesInQueries = obscureValues;
     this.printStream = printStream;
     this.sessionRepository = sessionRepositoryBuilder.build();
     this.executor = executor;
@@ -132,6 +135,9 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     this.usingKeyspace = keyspace;
     return this;
   }
+
+  @Override
+  public boolean obscureValuesInQueries() { return obscureValuesInQueries; }
 
   @Override
   public boolean isShowCql() {

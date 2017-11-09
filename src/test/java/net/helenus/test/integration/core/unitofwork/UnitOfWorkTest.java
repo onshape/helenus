@@ -27,6 +27,7 @@ import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.core.UnitOfWork;
 import net.helenus.core.annotation.Cacheable;
+import net.helenus.core.annotation.Transactional;
 import net.helenus.core.reflect.Entity;
 import net.helenus.mapping.annotation.Constraints;
 import net.helenus.mapping.annotation.Index;
@@ -39,6 +40,7 @@ import org.junit.Test;
 
 @Table
 @Cacheable
+@Transactional
 interface Widget extends Entity {
   @PartitionKey
   UUID id();

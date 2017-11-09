@@ -56,6 +56,7 @@ public abstract class Operation<E> {
 
   Operation(AbstractSessionOperations sessionOperations) {
     this.sessionOps = sessionOperations;
+    this.showValues = !sessionOps.obscureValuesInQueries();
     MetricRegistry metrics = sessionOperations.getMetricRegistry();
     if (metrics == null) {
       metrics = new MetricRegistry();

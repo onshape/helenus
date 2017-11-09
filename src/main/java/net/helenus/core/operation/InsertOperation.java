@@ -144,12 +144,12 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
 
   @Override
   public BuiltStatement buildStatement(boolean cached) {
-    List<HelenusEntity> entities = values.stream().map(t -> t._1.getProperty().getEntity()).distinct().collect(Collectors.toList());
+    List<Class<?>> entities = values.stream().map(t -> t._1.getProperty().getEntity().getMappingInterface()).distinct().collect(Collectors.toList());
     if (entities.size() != 1) {
       throw new HelenusMappingException("you can insert only single entity at a time, found: "
-              + entities.stream().map(e -> e.getMappingInterface().toString()).collect(Collectors.joining(", ")));
+              + entities.stream().map(e -> e.toString()).collect(Collectors.joining(", ")));
     }
-    HelenusEntity entity = entities.get(0);
+    HelenusEntity entity = values.get(0)._1.getEntity();
     if (this.entity != null) {
       if (this.entity != entity) {
         throw new HelenusMappingException("you can insert only single entity at a time, found: " +

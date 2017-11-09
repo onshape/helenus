@@ -25,6 +25,8 @@ import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+
+import net.helenus.core.annotation.Transactional;
 import net.helenus.core.cache.SessionCache;
 import net.helenus.core.reflect.DslExportable;
 import net.helenus.mapping.HelenusEntity;
@@ -56,6 +58,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
   private KeyspaceMetadata keyspaceMetadata;
   private AutoDdl autoDdl = AutoDdl.UPDATE;
   private SessionCache sessionCache = null;
+  private boolean obscureValues = true;
 
   SessionInitializer(Session session) {
     this.session = Objects.requireNonNull(session, "empty session");
@@ -100,6 +103,16 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
   public SessionInitializer showCql(boolean enabled) {
     this.showCql = enabled;
+    return this;
+  }
+
+  public SessionInitializer obscureValuesWhenLoggingQueries() {
+    this.obscureValues = true;
+    return this;
+  }
+
+  public SessionInitializer obscureValuesWhenLoggingQueries(boolean obscureValues) {
+    this.obscureValues = obscureValues;
     return this;
   }
 
@@ -255,6 +268,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
         usingKeyspace,
         registry,
         showCql,
+        obscureValues,
         printStream,
         sessionRepository,
         executor,
@@ -271,19 +285,30 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
     Objects.requireNonNull(usingKeyspace, "please define keyspace by 'use' operator");
 
-    initList.forEach(
-        (either) -> {
-          Class<?> iface = null;
-          if (either.isLeft()) {
-            iface = MappingUtil.getMappingInterface(either.getLeft());
-          } else {
-            iface = either.getRight();
-          }
+    boolean transactionalEntities = false;
+    HelenusEntity walEntity = null;
 
-          DslExportable dsl = (DslExportable) Helenus.dsl(iface);
-          dsl.setCassandraMetadataForHelenusSession(session.getCluster().getMetadata());
-          sessionRepository.add(dsl);
-        });
+    for (Either<Object, Class<?>> either : initList) {
+      Class<?> iface = null;
+      if (either.isLeft()) {
+        iface = MappingUtil.getMappingInterface(either.getLeft());
+      } else {
+        iface = either.getRight();
+      }
+
+      DslExportable dsl = (DslExportable) Helenus.dsl(iface);
+      dsl.setCassandraMetadataForHelenusSession(session.getCluster().getMetadata());
+      sessionRepository.add(dsl);
+
+      if (!transactionalEntities && iface.getDeclaredAnnotation(Transactional.class) != null) {
+        transactionalEntities = true;
+        dsl = (DslExportable) Helenus.dsl(WriteAheadLog.class);
+        dsl.setCassandraMetadataForHelenusSession(session.getCluster().getMetadata());
+        walEntity = dsl.getHelenusMappingEntity();
+        sessionRepository.add(dsl);
+      }
+    }
+
 
     TableOperations tableOps = new TableOperations(this, dropUnusedColumns, dropUnusedIndexes);
     UserTypeOperations userTypeOps = new UserTypeOperations(this, dropUnusedColumns);
@@ -311,6 +336,10 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
         eachUserTypeInReverseOrder(userTypeOps, e -> userTypeOps.dropUserType(e));
 
+        if (transactionalEntities) {
+          tableOps.dropTable(walEntity);
+        }
+
         // FALLTHRU to CREATE case (read: the absence of a `break;` statement here is
         // intentional!)
       case CREATE:
@@ -328,6 +357,9 @@ public final class SessionInitializer extends AbstractSessionOperations {
             .filter(e -> e.getType() == HelenusEntityType.VIEW)
             .forEach(e -> tableOps.createView(e));
 
+        if (transactionalEntities) {
+          tableOps.createTable(walEntity);
+        }
         break;
 
       case VALIDATE:
@@ -339,6 +371,9 @@ public final class SessionInitializer extends AbstractSessionOperations {
             .filter(e -> e.getType() == HelenusEntityType.TABLE)
             .forEach(e -> tableOps.validateTable(getTableMetadata(e), e));
 
+        if (transactionalEntities) {
+          tableOps.validateTable(getTableMetadata(walEntity), walEntity);
+        }
         break;
 
       case UPDATE:
@@ -361,6 +396,10 @@ public final class SessionInitializer extends AbstractSessionOperations {
             .stream()
             .filter(e -> e.getType() == HelenusEntityType.VIEW)
             .forEach(e -> tableOps.createView(e));
+
+        if (transactionalEntities) {
+          tableOps.updateTable(getTableMetadata(walEntity), walEntity);
+        }
         break;
     }
 

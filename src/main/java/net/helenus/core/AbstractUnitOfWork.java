@@ -15,19 +15,12 @@
  */
 package net.helenus.core;
 
-import static net.helenus.core.HelenusSession.deleted;
-
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.utils.UUIDs;
 import com.diffplug.common.base.Errors;
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import com.google.common.collect.TreeTraverser;
-import java.util.*;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.operation.AbstractOperation;
@@ -35,6 +28,16 @@ import net.helenus.core.operation.BatchOperation;
 import net.helenus.support.Either;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static net.helenus.core.HelenusSession.deleted;
+import static net.helenus.core.Query.gte;
+import static net.helenus.core.Query.lt;
 
 /** Encapsulates the concept of a "transaction" as a unit-of-work. */
 public abstract class AbstractUnitOfWork<E extends Exception>
@@ -45,6 +48,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   private final List<AbstractUnitOfWork<E>> nested = new ArrayList<>();
   private final HelenusSession session;
   private final AbstractUnitOfWork<E> parent;
+  private final UUID id;
   private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
@@ -60,12 +64,16 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   private boolean committed = false;
   private long committedAt = 0L;
   private BatchOperation batch;
+  private WriteAheadLog wal;
+  private long oldestInFlight;
 
   protected AbstractUnitOfWork(HelenusSession session, AbstractUnitOfWork<E> parent) {
     Objects.requireNonNull(session, "containing session cannot be null");
 
     this.session = session;
     this.parent = parent;
+    this.id = UUIDs.random();
+    this.wal = Helenus.dsl(WriteAheadLog.class);
   }
 
   @Override
@@ -95,7 +103,25 @@ public abstract class AbstractUnitOfWork<E extends Exception>
     if (LOG.isInfoEnabled()) {
       elapsedTime = Stopwatch.createStarted();
     }
-    // log.record(txn::start)
+
+    UUID seq = UUIDs.timeBased();
+    try {
+      session.upsert(WriteAheadLog.class)
+              .value(wal::lsn, seq)
+              .value(wal::uow, id)
+              .value(wal::type, WriteAheadLog.Type.BEGIN)
+              .usingTimestamp(seq.timestamp())
+              .consistencyQuorum()
+              .sync();
+    } catch(TimeoutException e) {
+      aborted = true;
+    }
+
+    /* TODO(gburd): find oldest BEGIN record between: time[now] and time[now] - txn timeout (e.g. 5m ago)
+       that doesn't have a corresponding COMMITTED or ABORTED record.  Save that UUID for later. */
+    oldestInFlight = seq.timestamp() - (5 * 60 * 1000 * 1000 * 100);
+    Date d = new Date(oldestInFlight);
+
     return this;
   }
 
@@ -292,7 +318,6 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
     if (batch != null) {
         committedAt = batch.sync(this);
-        //TODO(gburd) update cache with writeTime...
     }
 
     // All nested UnitOfWork should be committed (not aborted) before calls to
@@ -306,10 +331,48 @@ public abstract class AbstractUnitOfWork<E extends Exception>
       }
     }
 
-    // log.record(txn::provisionalCommit)
+    // 1. log.record(txn::provisionalCommit)
+    UUID seqPrep = UUIDs.timeBased();
+    try {
+      UUID seq = seqPrep;
+      session.upsert(WriteAheadLog.class)
+              .value(wal::lsn, seq)
+              .value(wal::uow, id)
+              .value(wal::type, WriteAheadLog.Type.PREPARED)
+              .usingTimestamp(seq.timestamp())
+              .consistencyQuorum()
+              .sync();
+    } catch (TimeoutException e) {
+      canCommit = false;
+      aborted = true;
+    }
+
+    // 2. fetch log records between oldest in-flight txn begin and
+    Stream<WriteAheadLog> recs = session.select(WriteAheadLog.class)
+            .where(wal::lsn, gte(oldestInFlight))
+            .and(wal::lsn, lt(seqPrep))
+            .consistencyQuorum()
+            .sync();
+
     // examine log for conflicts in read-set and write-set between begin and
     // provisional commit
     // if (conflict) { throw new ConflictingUnitOfWorkException(this) }
+
+    UUID seqCommit = UUIDs.timeBased();
+    try {
+      UUID seq = seqCommit;
+      session.upsert(WriteAheadLog.class)
+              .value(wal::lsn, seq)
+              .value(wal::uow, id)
+              .value(wal::type, WriteAheadLog.Type.COMMITTED)
+              .usingTimestamp(seq.timestamp())
+              .consistencyQuorum()
+              .sync();
+    } catch (TimeoutException e) {
+      canCommit = false;
+      aborted = true;
+    }
+
     // else return function so as to enable commit.andThen(() -> { do something iff
     // commit was successful; })
 
