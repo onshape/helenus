@@ -15,25 +15,12 @@
  */
 package net.helenus.core;
 
-import static net.helenus.core.Query.eq;
-
 import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.collect.Table;
-import java.io.Closeable;
-import java.io.PrintStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
-import net.helenus.core.cache.SessionCache;
 import net.helenus.core.cache.UnboundFacet;
 import net.helenus.core.operation.*;
 import net.helenus.core.reflect.Drafted;
@@ -49,6 +36,24 @@ import net.helenus.support.Fun.Tuple2;
 import net.helenus.support.Fun.Tuple6;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.cache.Cache;
+import javax.cache.CacheManager;
+import javax.cache.Caching;
+import javax.cache.configuration.MutableConfiguration;
+import javax.cache.spi.CachingProvider;
+import java.io.Closeable;
+import java.io.PrintStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static net.helenus.core.Query.eq;
 
 public class HelenusSession extends AbstractSessionOperations implements Closeable {
 
@@ -68,7 +73,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   private final SessionRepository sessionRepository;
   private final Executor executor;
   private final boolean dropSchemaOnClose;
-  private final SessionCache<String, Object> sessionCache;
+  private final CacheManager cacheManager;
   private final RowColumnValueProvider valueProvider;
   private final StatementColumnValuePreparer valuePreparer;
   private final Metadata metadata;
@@ -77,21 +82,21 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   private volatile boolean showValues;
 
   HelenusSession(
-      Session session,
-      String usingKeyspace,
-      CodecRegistry registry,
-      boolean showCql,
-      boolean showValues,
-      PrintStream printStream,
-      SessionRepositoryBuilder sessionRepositoryBuilder,
-      Executor executor,
-      boolean dropSchemaOnClose,
-      ConsistencyLevel consistencyLevel,
-      boolean defaultQueryIdempotency,
-      Class<? extends UnitOfWork> unitOfWorkClass,
-      SessionCache sessionCache,
-      MetricRegistry metricRegistry,
-      Tracer tracer) {
+          Session session,
+          String usingKeyspace,
+          CodecRegistry registry,
+          boolean showCql,
+          boolean showValues,
+          PrintStream printStream,
+          SessionRepositoryBuilder sessionRepositoryBuilder,
+          Executor executor,
+          boolean dropSchemaOnClose,
+          ConsistencyLevel consistencyLevel,
+          boolean defaultQueryIdempotency,
+          Class<? extends UnitOfWork> unitOfWorkClass,
+          CacheManager cacheManager,
+          MetricRegistry metricRegistry,
+          Tracer tracer) {
     this.session = session;
     this.registry = registry == null ? CodecRegistry.DEFAULT_INSTANCE : registry;
     this.usingKeyspace =
@@ -109,11 +114,14 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     this.unitOfWorkClass = unitOfWorkClass;
     this.metricRegistry = metricRegistry;
     this.zipkinTracer = tracer;
+    this.cacheManager = cacheManger;
 
-    if (sessionCache == null) {
-      this.sessionCache = SessionCache.<String, Object>defaultCache();
-    } else {
-      this.sessionCache = sessionCache;
+    if (cacheManager == null) {
+      MutableConfiguration<String, Object> configuration = new MutableConfiguration<>();
+      configuration.setStoreByValue(false);
+      configuration.setTypes(String.class, Object.class);
+      CachingProvider cachingProvider = Caching.getCachingProvider(GuavaCacheManager.class.getName());
+      cacheManager = cachingProvider.getCacheManager();
     }
 
     this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
@@ -214,10 +222,13 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   @Override
   public Object checkCache(String tableName, List<Facet> facets) {
     Object result = null;
-    for (String key : CacheUtil.flatKeys(tableName, facets)) {
-      result = sessionCache.get(key);
-      if (result != null) {
-        return result;
+    Cache<String, Object> cache = cacheManager.getCache(tableName);
+    if (cache != null) {
+      for (String key : CacheUtil.flatKeys(tableName, facets)) {
+        result = cache.get(key);
+        if (result != null) {
+          return result;
+        }
       }
     }
     return null;
@@ -226,7 +237,10 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   @Override
   public void cacheEvict(List<Facet> facets) {
     String tableName = CacheUtil.schemaName(facets);
-    CacheUtil.flatKeys(tableName, facets).forEach(key -> sessionCache.invalidate(key));
+    Cache<String, Object> cache = cacheManager.getCache(tableName);
+    if (cache != null) {
+      CacheUtil.flatKeys(tableName, facets).forEach(key -> cache.remove(key));
+    }
   }
 
   @Override
@@ -278,6 +292,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
           pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
       if (entity.isCacheable()) {
         List<Facet> boundFacets = new ArrayList<>();
+        String tableName = CacheUtil.schemaName(boundFacets);
         for (Facet facet : entity.getFacets()) {
           if (facet instanceof UnboundFacet) {
             UnboundFacet unboundFacet = (UnboundFacet) facet;
@@ -305,34 +320,43 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
           }
         }
         List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
-        String tableName = CacheUtil.schemaName(boundFacets);
         replaceCachedFacetValues(pojo, tableName, facetCombinations);
       }
     }
 
-    List<List<Facet>> deletedFacetSets =
-        uowCache
-            .values()
-            .stream()
-            .filter(Either::isRight)
-            .map(Either::getRight)
-            .collect(Collectors.toList());
-    for (List<Facet> facets : deletedFacetSets) {
-      String tableName = CacheUtil.schemaName(facets);
-      List<String> keys = CacheUtil.flatKeys(tableName, facets);
-      keys.forEach(key -> sessionCache.invalidate(key));
-    }
+      if (cacheManager != null) {
+              List<List<Facet>> deletedFacetSets =
+                      uowCache
+                              .values()
+                              .stream()
+                              .filter(Either::isRight)
+                              .map(Either::getRight)
+                              .collect(Collectors.toList());
+              for (List<Facet> facets : deletedFacetSets) {
+                  String tableName = CacheUtil.schemaName(facets);
+                  Cache<String, Object> cache = cacheManager.getCache(tableName);
+                  if (cache != null) {
+                      List<String> keys = CacheUtil.flatKeys(tableName, facets);
+                      keys.forEach(key -> cache.remove(key));
+                  }
+              }
+          }
   }
 
   private void replaceCachedFacetValues(
       Object pojo, String tableName, List<String[]> facetCombinations) {
     for (String[] combination : facetCombinations) {
-      String cacheKey = tableName + "." + Arrays.toString(combination);
-      if (pojo == null || pojo == HelenusSession.deleted) {
-        sessionCache.invalidate(cacheKey);
-      } else {
-        sessionCache.put(cacheKey, pojo);
-      }
+        String cacheKey = tableName + "." + Arrays.toString(combination);
+        if (cacheManager != null) {
+            Cache<String, Object> cache = cacheManager.getCache(tableName);
+            if (cache != null) {
+                if (pojo == null || pojo == HelenusSession.deleted) {
+                    cache.remove(cacheKey);
+                } else {
+                    cache.put(cacheKey, pojo);
+                }
+            }
+        }
     }
   }
 

@@ -17,26 +17,8 @@ package net.helenus.core;
 
 import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
-import com.datastax.driver.core.CodecRegistry;
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.KeyspaceMetadata;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.TableMetadata;
-import com.datastax.driver.core.UserType;
+import com.datastax.driver.core.*;
 import com.google.common.util.concurrent.MoreExecutors;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.function.Consumer;
-import net.helenus.core.cache.SessionCache;
 import net.helenus.core.reflect.DslExportable;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusEntityType;
@@ -46,6 +28,14 @@ import net.helenus.mapping.value.ColumnValueProvider;
 import net.helenus.support.Either;
 import net.helenus.support.HelenusException;
 import net.helenus.support.PackageUtil;
+
+import javax.cache.CacheManager;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 public final class SessionInitializer extends AbstractSessionOperations {
 
@@ -67,7 +57,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
   private boolean dropUnusedIndexes = false;
   private KeyspaceMetadata keyspaceMetadata;
   private AutoDdl autoDdl = AutoDdl.UPDATE;
-  private SessionCache sessionCache = null;
+  private CacheManager cacheManager = null;
 
   SessionInitializer(Session session, String keyspace) {
     this.session = session;
@@ -157,8 +147,8 @@ public final class SessionInitializer extends AbstractSessionOperations {
     return this;
   }
 
-  public SessionInitializer setSessionCache(SessionCache sessionCache) {
-    this.sessionCache = sessionCache;
+  public SessionInitializer setCacheManager(CacheManager cacheManager) {
+    this.cacheManager = cacheManager;
     return this;
   }
 
@@ -304,7 +294,7 @@ public final class SessionInitializer extends AbstractSessionOperations {
         consistencyLevel,
         idempotent,
         unitOfWorkClass,
-        sessionCache,
+        cacheManager,
         metricRegistry,
         zipkinTracer);
   }
