@@ -22,12 +22,17 @@ import com.datastax.driver.core.utils.UUIDs;
 import java.io.Serializable;
 import java.util.Date;
 import java.util.UUID;
+
+import javax.cache.CacheManager;
+import javax.cache.configuration.MutableConfiguration;
+
 import net.bytebuddy.utility.RandomString;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.core.UnitOfWork;
 import net.helenus.core.annotation.Cacheable;
 import net.helenus.core.reflect.Entity;
+import net.helenus.mapping.MappingUtil;
 import net.helenus.mapping.annotation.Constraints;
 import net.helenus.mapping.annotation.Index;
 import net.helenus.mapping.annotation.PartitionKey;
@@ -75,6 +80,13 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
             .idempotentQueryExecution(true)
             .get();
     widget = session.dsl(Widget.class);
+
+      MutableConfiguration<String, Object> configuration = new MutableConfiguration<>();
+      configuration
+              .setStoreByValue(false)
+              .setReadThrough(false);
+    CacheManager cacheManager = session.getCacheManager();
+    cacheManager.createCache(MappingUtil.getTableName(Widget.class, true).toString(), configuration);
   }
 
   @Test
@@ -332,8 +344,12 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
       w2 =
           session.<Widget>select(widget).where(widget::id, eq(key)).single().sync(uow).orElse(null);
 
+      String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key.toString();
+      uow.cacheUpdate(cacheKey, w1);
+
       // This should remove the object from the cache.
       session.delete(widget).where(widget::id, eq(key)).sync(uow);
+      uow.cacheDelete(cacheKey);
 
       // This should fail to read from the cache.
       w3 =
@@ -452,6 +468,9 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .value(widget::id, key1)
               .value(widget::name, RandomString.make(20))
               .sync(uow);
+
+        String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key1.toString();
+        uow.cacheUpdate(cacheKey, w1);
       /*
       w2 = session.<Widget>upsert(w1)
               .value(widget::a, RandomString.make(10))
@@ -484,9 +503,12 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .value(widget::d, RandomString.make(10))
               .sync(uow);
 
+      String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key.toString();
+      uow.cacheUpdate(cacheKey, w1);
       // This should read from the cache and get the same instance of a Widget.
       w2 =
           session.<Widget>select(widget).where(widget::id, eq(key)).single().sync(uow).orElse(null);
+      uow.cacheUpdate(cacheKey, w1);
 
       uow.commit()
           .andThen(

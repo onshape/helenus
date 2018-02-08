@@ -158,6 +158,16 @@
             <groupId>ca.exprofesso</groupId>
             <artifactId>guava-jcache</artifactId>
             <version>1.0.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.cache</groupId>
+                    <artifactId>cache-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Metrics and tracing -->

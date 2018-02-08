@@ -22,6 +22,14 @@ Operation/
 `-- PreparedStreamOperation
 
 
+----
+@CompoundIndex()
+create a new col in the same table called __idx_a_b_c that the hash of the concatenated values in that order is stored, create a normal index for that (CREATE INDEX ...)
+if a query matches that set of columns then use that indexed col to fetch the desired results from that table
+could also work with .in() query if materialized view exists
+----
+
+
     // TODO(gburd): create a statement that matches one that wasn't prepared
     //String key =
     //    "use " + preparedStatement.getQueryKeyspace() + "; " + preparedStatement.getQueryString();

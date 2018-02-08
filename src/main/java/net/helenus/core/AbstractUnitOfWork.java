@@ -28,6 +28,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
+
+import javax.cache.Cache;
+import javax.cache.CacheManager;
+
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.operation.AbstractOperation;
@@ -36,6 +40,7 @@ import net.helenus.mapping.MappingUtil;
 import net.helenus.support.Either;
 import net.helenus.support.HelenusException;
 import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -262,7 +267,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
   @Override
   public void cacheDelete(String key) {
-    statementCache.replace(key, deleted);
+    statementCache.put(key, deleted);
   }
 
   @Override
@@ -303,7 +308,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
   @Override
   public Object cacheUpdate(String key, Object value) {
-    return statementCache.replace(key, value);
+    return statementCache.put(key, value);
   }
 
   @Override
@@ -315,7 +320,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
         if (facet.alone()) {
           String columnName = facet.name() + "==" + facet.value();
           if (result == null) result = cache.get(tableName, columnName);
-          cache.put(tableName, columnName, Either.left(value));
+            cache.put(tableName, columnName, Either.left(value));
         }
       }
     }
@@ -394,7 +399,30 @@ public abstract class AbstractUnitOfWork<E extends Exception>
                   applyPostCommitFunctions("committed", uow.commitThunks);
                 });
 
-        // Merge our cache into the session cache.
+        // Merge our statement cache into the session cache if it exists.
+          CacheManager cacheManager = session.getCacheManager();
+          if (cacheManager != null) {
+              for (Map.Entry<String, Object> entry : statementCache.entrySet()) {
+                  String[] keyParts = entry.getKey().split("\\.");
+                  if (keyParts.length == 2) {
+                      String cacheName = keyParts[0];
+                      String key = keyParts[1];
+                      if (!StringUtils.isBlank(cacheName) && !StringUtils.isBlank(key)) {
+                          Cache<Object, Object> cache = cacheManager.getCache(cacheName);
+                          if (cache != null) {
+                              Object value = entry.getValue();
+                              if (value == deleted) {
+                                  cache.remove(key);
+                              } else {
+                                  cache.put(key.toString(), value);
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          // Merge our cache into the session cache.
         session.mergeCache(cache);
 
         // Spoil any lingering futures that may be out there.

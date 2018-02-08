@@ -16,6 +16,7 @@
 package net.helenus.core;
 
 import brave.Tracer;
+import ca.exprofesso.guava.jcache.GuavaCachingProvider;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.collect.Table;
@@ -40,7 +41,6 @@ import org.slf4j.LoggerFactory;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
 import javax.cache.Caching;
-import javax.cache.configuration.MutableConfiguration;
 import javax.cache.spi.CachingProvider;
 import java.io.Closeable;
 import java.io.PrintStream;
@@ -57,8 +57,8 @@ import static net.helenus.core.Query.eq;
 
 public class HelenusSession extends AbstractSessionOperations implements Closeable {
 
-  public static final Object deleted = new Object();
   private static final Logger LOG = LoggerFactory.getLogger(HelenusSession.class);
+  public static final Object deleted = new Object();
   private static final Pattern classNameRegex =
       Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
@@ -114,14 +114,12 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     this.unitOfWorkClass = unitOfWorkClass;
     this.metricRegistry = metricRegistry;
     this.zipkinTracer = tracer;
-    this.cacheManager = cacheManger;
 
     if (cacheManager == null) {
-      MutableConfiguration<String, Object> configuration = new MutableConfiguration<>();
-      configuration.setStoreByValue(false);
-      configuration.setTypes(String.class, Object.class);
-      CachingProvider cachingProvider = Caching.getCachingProvider(GuavaCacheManager.class.getName());
-      cacheManager = cachingProvider.getCacheManager();
+      CachingProvider cachingProvider = Caching.getCachingProvider(GuavaCachingProvider.class.getName());
+      this.cacheManager = cachingProvider.getCacheManager();
+    } else {
+        this.cacheManager = cacheManager;
     }
 
     this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
@@ -278,6 +276,9 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public void mergeCache(Table<String, String, Either<Object, List<Facet>>> uowCache) {
+      if (cacheManager == null) {
+          return;
+      }
     List<Object> items =
         uowCache
             .values()
@@ -325,22 +326,22 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     }
 
       if (cacheManager != null) {
-              List<List<Facet>> deletedFacetSets =
-                      uowCache
-                              .values()
-                              .stream()
-                              .filter(Either::isRight)
-                              .map(Either::getRight)
-                              .collect(Collectors.toList());
-              for (List<Facet> facets : deletedFacetSets) {
-                  String tableName = CacheUtil.schemaName(facets);
-                  Cache<String, Object> cache = cacheManager.getCache(tableName);
-                  if (cache != null) {
-                      List<String> keys = CacheUtil.flatKeys(tableName, facets);
-                      keys.forEach(key -> cache.remove(key));
-                  }
+          List<List<Facet>> deletedFacetSets =
+                  uowCache
+                          .values()
+                          .stream()
+                          .filter(Either::isRight)
+                          .map(Either::getRight)
+                          .collect(Collectors.toList());
+          for (List<Facet> facets : deletedFacetSets) {
+              String tableName = CacheUtil.schemaName(facets);
+              Cache<String, Object> cache = cacheManager.getCache(tableName);
+              if (cache != null) {
+                  List<String> keys = CacheUtil.flatKeys(tableName, facets);
+                  keys.forEach(key -> cache.remove(key));
               }
           }
+      }
   }
 
   private void replaceCachedFacetValues(
@@ -358,6 +359,10 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
             }
         }
     }
+  }
+
+  public CacheManager getCacheManager() {
+      return cacheManager;
   }
 
   public Metadata getMetadata() {
