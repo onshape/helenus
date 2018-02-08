@@ -154,22 +154,6 @@
             <version>20.0</version>
         </dependency>
 
-        <dependency>
-            <groupId>ca.exprofesso</groupId>
-            <artifactId>guava-jcache</artifactId>
-            <version>1.0.4</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.guava</groupId>
-                    <artifactId>guava</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>javax.cache</groupId>
-                    <artifactId>cache-api</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
         <!-- Metrics and tracing -->
         <dependency>
             <groupId>io.zipkin.java</groupId>
@@ -236,6 +220,24 @@
             <groupId>org.apache.cassandra</groupId>
             <artifactId>cassandra-all</artifactId>
             <version>3.11.0</version>
+            <scope>test</scope>
+        </dependency>
+
+
+        <dependency>
+            <groupId>ca.exprofesso</groupId>
+            <artifactId>guava-jcache</artifactId>
+            <version>1.0.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.cache</groupId>
+                    <artifactId>cache-api</artifactId>
+                </exclusion>
+            </exclusions>
             <scope>test</scope>
         </dependency>
 

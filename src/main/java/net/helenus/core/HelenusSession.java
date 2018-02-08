@@ -15,11 +15,24 @@
  */
 package net.helenus.core;
 
+import static net.helenus.core.Query.eq;
+
 import brave.Tracer;
-import ca.exprofesso.guava.jcache.GuavaCachingProvider;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.collect.Table;
+import java.io.Closeable;
+import java.io.PrintStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import javax.cache.Cache;
+import javax.cache.CacheManager;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
@@ -37,23 +50,6 @@ import net.helenus.support.Fun.Tuple2;
 import net.helenus.support.Fun.Tuple6;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.cache.Cache;
-import javax.cache.CacheManager;
-import javax.cache.Caching;
-import javax.cache.spi.CachingProvider;
-import java.io.Closeable;
-import java.io.PrintStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-
-import static net.helenus.core.Query.eq;
 
 public class HelenusSession extends AbstractSessionOperations implements Closeable {
 
@@ -82,21 +78,21 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   private volatile boolean showValues;
 
   HelenusSession(
-          Session session,
-          String usingKeyspace,
-          CodecRegistry registry,
-          boolean showCql,
-          boolean showValues,
-          PrintStream printStream,
-          SessionRepositoryBuilder sessionRepositoryBuilder,
-          Executor executor,
-          boolean dropSchemaOnClose,
-          ConsistencyLevel consistencyLevel,
-          boolean defaultQueryIdempotency,
-          Class<? extends UnitOfWork> unitOfWorkClass,
-          CacheManager cacheManager,
-          MetricRegistry metricRegistry,
-          Tracer tracer) {
+      Session session,
+      String usingKeyspace,
+      CodecRegistry registry,
+      boolean showCql,
+      boolean showValues,
+      PrintStream printStream,
+      SessionRepositoryBuilder sessionRepositoryBuilder,
+      Executor executor,
+      boolean dropSchemaOnClose,
+      ConsistencyLevel consistencyLevel,
+      boolean defaultQueryIdempotency,
+      Class<? extends UnitOfWork> unitOfWorkClass,
+      CacheManager cacheManager,
+      MetricRegistry metricRegistry,
+      Tracer tracer) {
     this.session = session;
     this.registry = registry == null ? CodecRegistry.DEFAULT_INSTANCE : registry;
     this.usingKeyspace =
@@ -114,13 +110,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     this.unitOfWorkClass = unitOfWorkClass;
     this.metricRegistry = metricRegistry;
     this.zipkinTracer = tracer;
-
-    if (cacheManager == null) {
-      CachingProvider cachingProvider = Caching.getCachingProvider(GuavaCachingProvider.class.getName());
-      this.cacheManager = cachingProvider.getCacheManager();
-    } else {
-        this.cacheManager = cacheManager;
-    }
+    this.cacheManager = cacheManager;
 
     this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
     this.valuePreparer = new StatementColumnValuePreparer(this.sessionRepository);
@@ -220,12 +210,14 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   @Override
   public Object checkCache(String tableName, List<Facet> facets) {
     Object result = null;
-    Cache<String, Object> cache = cacheManager.getCache(tableName);
-    if (cache != null) {
-      for (String key : CacheUtil.flatKeys(tableName, facets)) {
-        result = cache.get(key);
-        if (result != null) {
-          return result;
+    if (cacheManager != null) {
+      Cache<String, Object> cache = cacheManager.getCache(tableName);
+      if (cache != null) {
+        for (String key : CacheUtil.flatKeys(tableName, facets)) {
+          result = cache.get(key);
+          if (result != null) {
+            return result;
+          }
         }
       }
     }
@@ -234,10 +226,12 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public void cacheEvict(List<Facet> facets) {
-    String tableName = CacheUtil.schemaName(facets);
-    Cache<String, Object> cache = cacheManager.getCache(tableName);
-    if (cache != null) {
-      CacheUtil.flatKeys(tableName, facets).forEach(key -> cache.remove(key));
+    if (cacheManager != null) {
+      String tableName = CacheUtil.schemaName(facets);
+      Cache<String, Object> cache = cacheManager.getCache(tableName);
+      if (cache != null) {
+        CacheUtil.flatKeys(tableName, facets).forEach(key -> cache.remove(key));
+      }
     }
   }
 
@@ -276,93 +270,90 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public void mergeCache(Table<String, String, Either<Object, List<Facet>>> uowCache) {
-      if (cacheManager == null) {
-          return;
-      }
-    List<Object> items =
-        uowCache
-            .values()
-            .stream()
-            .filter(Either::isLeft)
-            .map(Either::getLeft)
-            .distinct()
-            .collect(Collectors.toList());
-    for (Object pojo : items) {
-      HelenusEntity entity = Helenus.resolve(MappingUtil.getMappingInterface(pojo));
-      Map<String, Object> valueMap =
-          pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
-      if (entity.isCacheable()) {
-        List<Facet> boundFacets = new ArrayList<>();
-        String tableName = CacheUtil.schemaName(boundFacets);
-        for (Facet facet : entity.getFacets()) {
-          if (facet instanceof UnboundFacet) {
-            UnboundFacet unboundFacet = (UnboundFacet) facet;
-            UnboundFacet.Binder binder = unboundFacet.binder();
-            unboundFacet
-                .getProperties()
-                .forEach(
-                    prop -> {
-                      if (valueMap == null) {
-                        Object value =
-                            BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop);
-                        binder.setValueForProperty(prop, value.toString());
-                      } else {
-                        Object v = valueMap.get(prop.getPropertyName());
-                        if (v != null) {
-                          binder.setValueForProperty(prop, v.toString());
+    if (cacheManager != null) {
+      List<Object> items =
+          uowCache
+              .values()
+              .stream()
+              .filter(Either::isLeft)
+              .map(Either::getLeft)
+              .distinct()
+              .collect(Collectors.toList());
+      for (Object pojo : items) {
+        HelenusEntity entity = Helenus.resolve(MappingUtil.getMappingInterface(pojo));
+        Map<String, Object> valueMap =
+            pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
+        if (entity.isCacheable()) {
+          List<Facet> boundFacets = new ArrayList<>();
+          String tableName = CacheUtil.schemaName(boundFacets);
+          for (Facet facet : entity.getFacets()) {
+            if (facet instanceof UnboundFacet) {
+              UnboundFacet unboundFacet = (UnboundFacet) facet;
+              UnboundFacet.Binder binder = unboundFacet.binder();
+              unboundFacet
+                  .getProperties()
+                  .forEach(
+                      prop -> {
+                        if (valueMap == null) {
+                          Object value =
+                              BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop);
+                          binder.setValueForProperty(prop, value.toString());
+                        } else {
+                          Object v = valueMap.get(prop.getPropertyName());
+                          if (v != null) {
+                            binder.setValueForProperty(prop, v.toString());
+                          }
                         }
-                      }
-                    });
-            if (binder.isBound()) {
-              boundFacets.add(binder.bind());
+                      });
+              if (binder.isBound()) {
+                boundFacets.add(binder.bind());
+              }
+            } else {
+              boundFacets.add(facet);
             }
-          } else {
-            boundFacets.add(facet);
           }
+          List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
+          replaceCachedFacetValues(pojo, tableName, facetCombinations);
         }
-        List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
-        replaceCachedFacetValues(pojo, tableName, facetCombinations);
+      }
+
+      List<List<Facet>> deletedFacetSets =
+          uowCache
+              .values()
+              .stream()
+              .filter(Either::isRight)
+              .map(Either::getRight)
+              .collect(Collectors.toList());
+      for (List<Facet> facets : deletedFacetSets) {
+        String tableName = CacheUtil.schemaName(facets);
+        Cache<String, Object> cache = cacheManager.getCache(tableName);
+        if (cache != null) {
+          List<String> keys = CacheUtil.flatKeys(tableName, facets);
+          keys.forEach(key -> cache.remove(key));
+        }
       }
     }
-
-      if (cacheManager != null) {
-          List<List<Facet>> deletedFacetSets =
-                  uowCache
-                          .values()
-                          .stream()
-                          .filter(Either::isRight)
-                          .map(Either::getRight)
-                          .collect(Collectors.toList());
-          for (List<Facet> facets : deletedFacetSets) {
-              String tableName = CacheUtil.schemaName(facets);
-              Cache<String, Object> cache = cacheManager.getCache(tableName);
-              if (cache != null) {
-                  List<String> keys = CacheUtil.flatKeys(tableName, facets);
-                  keys.forEach(key -> cache.remove(key));
-              }
-          }
-      }
   }
 
   private void replaceCachedFacetValues(
       Object pojo, String tableName, List<String[]> facetCombinations) {
-    for (String[] combination : facetCombinations) {
+    if (cacheManager != null) {
+      for (String[] combination : facetCombinations) {
         String cacheKey = tableName + "." + Arrays.toString(combination);
-        if (cacheManager != null) {
-            Cache<String, Object> cache = cacheManager.getCache(tableName);
-            if (cache != null) {
-                if (pojo == null || pojo == HelenusSession.deleted) {
-                    cache.remove(cacheKey);
-                } else {
-                    cache.put(cacheKey, pojo);
-                }
-            }
+        Cache<String, Object> cache = cacheManager.getCache(tableName);
+        if (cache != null) {
+          if (pojo == null || pojo == HelenusSession.deleted) {
+            cache.remove(cacheKey);
+          } else {
+            cache.put(cacheKey, pojo);
+          }
         }
+      }
     }
   }
 
   public CacheManager getCacheManager() {
-      return cacheManager;
+    return cacheManager;
   }
 
   public Metadata getMetadata() {

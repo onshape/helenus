@@ -17,15 +17,16 @@ package net.helenus.test.integration.core.unitofwork;
 
 import static net.helenus.core.Query.eq;
 
+import ca.exprofesso.guava.jcache.GuavaCachingProvider;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.utils.UUIDs;
 import java.io.Serializable;
 import java.util.Date;
 import java.util.UUID;
-
 import javax.cache.CacheManager;
+import javax.cache.Caching;
 import javax.cache.configuration.MutableConfiguration;
-
+import javax.cache.spi.CachingProvider;
 import net.bytebuddy.utility.RandomString;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
@@ -71,6 +72,14 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
 
   @BeforeClass
   public static void beforeTest() {
+    CachingProvider cachingProvider =
+        Caching.getCachingProvider(GuavaCachingProvider.class.getName());
+    CacheManager cacheManager = cachingProvider.getCacheManager();
+    MutableConfiguration<String, Object> configuration = new MutableConfiguration<>();
+    configuration.setStoreByValue(false).setReadThrough(false);
+    cacheManager.createCache(
+        MappingUtil.getTableName(Widget.class, true).toString(), configuration);
+
     session =
         Helenus.init(getSession())
             .showCql()
@@ -78,15 +87,9 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
             .autoCreateDrop()
             .consistencyLevel(ConsistencyLevel.ONE)
             .idempotentQueryExecution(true)
+            .setCacheManager(cacheManager)
             .get();
     widget = session.dsl(Widget.class);
-
-      MutableConfiguration<String, Object> configuration = new MutableConfiguration<>();
-      configuration
-              .setStoreByValue(false)
-              .setReadThrough(false);
-    CacheManager cacheManager = session.getCacheManager();
-    cacheManager.createCache(MappingUtil.getTableName(Widget.class, true).toString(), configuration);
   }
 
   @Test
@@ -469,8 +472,8 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .value(widget::name, RandomString.make(20))
               .sync(uow);
 
-        String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key1.toString();
-        uow.cacheUpdate(cacheKey, w1);
+      String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key1.toString();
+      uow.cacheUpdate(cacheKey, w1);
       /*
       w2 = session.<Widget>upsert(w1)
               .value(widget::a, RandomString.make(10))

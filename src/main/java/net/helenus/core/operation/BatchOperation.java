@@ -16,10 +16,10 @@
 package net.helenus.core.operation;
 
 import com.codahale.metrics.Timer;
+import com.datastax.driver.core.AtomicMonotonicTimestampGenerator;
 import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.TimestampGenerator;
-import com.datastax.driver.core.AtomicMonotonicTimestampGenerator;
 import com.google.common.base.Stopwatch;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +31,8 @@ import net.helenus.support.HelenusException;
 
 public class BatchOperation extends Operation<Long> {
   //TODO(gburd): find the way to get the driver's timestamp generator
-  private static final TimestampGenerator timestampGenerator = new AtomicMonotonicTimestampGenerator();
+  private static final TimestampGenerator timestampGenerator =
+      new AtomicMonotonicTimestampGenerator();
 
   private final BatchStatement batch;
   private List<AbstractOperation<?, ?>> operations = new ArrayList<AbstractOperation<?, ?>>();
