@@ -32,6 +32,7 @@ import javax.cache.Cache;
 import javax.cache.CacheManager;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
+import net.helenus.core.cache.MapCache;
 import net.helenus.core.operation.AbstractOperation;
 import net.helenus.core.operation.BatchOperation;
 import net.helenus.mapping.MappingUtil;
@@ -50,9 +51,9 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
   private final List<AbstractUnitOfWork<E>> nested = new ArrayList<>();
   private final HelenusSession session;
-  private final AbstractUnitOfWork<E> parent;
+  public final AbstractUnitOfWork<E> parent;
   private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
-  private final Map<String, Object> statementCache = new ConcurrentHashMap<String, Object>();
+  private final MapCache<String, Object> statementCache = new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", this);
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
   protected String info;
@@ -206,19 +207,6 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   }
 
   @Override
-  public Optional<Object> cacheLookup(String key) {
-    AbstractUnitOfWork self = this;
-    do {
-      Object result = self.statementCache.get(key);
-      if (result != null) {
-        return result == deleted ? Optional.ofNullable(null) : Optional.of(result);
-      }
-      self = self.parent;
-    } while (self != null);
-    return Optional.empty();
-  }
-
-  @Override
   public Optional<Object> cacheLookup(List<Facet> facets) {
     String tableName = CacheUtil.schemaName(facets);
     Optional<Object> result = Optional.empty();
@@ -259,16 +247,6 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   }
 
   @Override
-  public void cacheEvict(String key) {
-    statementCache.remove(key);
-  }
-
-  @Override
-  public void cacheDelete(String key) {
-    statementCache.put(key, deleted);
-  }
-
-  @Override
   public List<Facet> cacheEvict(List<Facet> facets) {
     Either<Object, List<Facet>> deletedObjectFacets = Either.right(facets);
     String tableName = CacheUtil.schemaName(facets);
@@ -305,8 +283,8 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   }
 
   @Override
-  public Object cacheUpdate(String key, Object value) {
-    return statementCache.put(key, value);
+  public Cache<String, Object> getCache() {
+      return statementCache;
   }
 
   @Override
@@ -376,10 +354,10 @@ public abstract class AbstractUnitOfWork<E extends Exception>
                   applyPostCommitFunctions("aborted", abortThunks);
                 });
 
-        elapsedTime.stop();
-        if (LOG.isInfoEnabled()) {
-          LOG.info(logTimers("aborted"));
-        }
+          elapsedTime.stop();
+          if (LOG.isInfoEnabled()) {
+              LOG.info(logTimers("aborted"));
+          }
       }
 
       return new PostCommitFunction(this, null, null, false);
@@ -400,12 +378,12 @@ public abstract class AbstractUnitOfWork<E extends Exception>
         // Merge our statement cache into the session cache if it exists.
         CacheManager cacheManager = session.getCacheManager();
         if (cacheManager != null) {
-          for (Map.Entry<String, Object> entry : statementCache.entrySet()) {
+          for (Map.Entry<String, Object> entry : (Set<Map.Entry<String, Object>>)statementCache.<Map>unwrap(Map.class).entrySet()) {
             String[] keyParts = entry.getKey().split("\\.");
             if (keyParts.length == 2) {
               String cacheName = keyParts[0];
               String key = keyParts[1];
-              if (!StringUtils.isBlank(cacheName) && !StringUtils.isBlank(key)) {
+                if (!StringUtils.isBlank(cacheName) && !StringUtils.isBlank(key)) {
                 Cache<Object, Object> cache = cacheManager.getCache(cacheName);
                 if (cache != null) {
                   Object value = entry.getValue();
@@ -439,7 +417,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
       } else {
 
         // Merge cache and statistics into parent if there is one.
-        parent.statementCache.putAll(statementCache);
+        parent.statementCache.putAll(statementCache.<Map>unwrap(Map.class));
         parent.mergeCache(cache);
         parent.addBatched(batch);
         if (purpose != null) {
@@ -497,6 +475,13 @@ public abstract class AbstractUnitOfWork<E extends Exception>
                 applyPostCommitFunctions("aborted", uow.abortThunks);
                 uow.abortThunks.clear();
               });
+
+      if (parent == null) {
+          elapsedTime.stop();
+          if (LOG.isInfoEnabled()) {
+              LOG.info(logTimers("aborted"));
+          }
+      }
 
       // TODO(gburd): when we integrate the transaction support we'll need to...
       // log.record(txn::abort)

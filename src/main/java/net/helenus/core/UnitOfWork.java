@@ -20,6 +20,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
+
+import javax.cache.Cache;
+
 import net.helenus.core.cache.Facet;
 import net.helenus.core.operation.AbstractOperation;
 
@@ -61,19 +64,13 @@ public interface UnitOfWork<X extends Exception> extends AutoCloseable {
 
   void addFuture(CompletableFuture<?> future);
 
-  Optional<Object> cacheLookup(String key);
-
   Optional<Object> cacheLookup(List<Facet> facets);
 
-  Object cacheUpdate(String key, Object value);
+  Cache<String, Object> getCache();
 
   Object cacheUpdate(Object pojo, List<Facet> facets);
 
-  void cacheEvict(String key);
-
   List<Facet> cacheEvict(List<Facet> facets);
-
-  public void cacheDelete(String key);
 
   String getPurpose();
 
