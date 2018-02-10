@@ -24,12 +24,13 @@ import com.google.common.collect.TreeTraverser;
 import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
+import javax.cache.integration.CacheLoader;
+import javax.cache.integration.CacheLoaderException;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.MapCache;
@@ -53,7 +54,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   private final HelenusSession session;
   public final AbstractUnitOfWork<E> parent;
   private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
-  private final MapCache<String, Object> statementCache = new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", this);
+  private final MapCache<String, Object> statementCache;
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
   protected String info;
@@ -76,6 +77,31 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
     this.session = session;
     this.parent = parent;
+    CacheLoader cacheLoader = null;
+    if (parent != null) {
+      cacheLoader =
+          new CacheLoader<String, Object>() {
+
+            Cache<String, Object> cache = parent.getCache();
+
+            @Override
+            public Object load(String key) throws CacheLoaderException {
+              return cache.get(key);
+            }
+
+            @Override
+            public Map<String, Object> loadAll(Iterable<? extends String> keys)
+                throws CacheLoaderException {
+              Map<String, Object> kvp = new HashMap<String, Object>();
+              for (String key : keys) {
+                kvp.put(key, cache.get(key));
+              }
+              return kvp;
+            }
+          };
+    }
+    this.statementCache =
+        new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", cacheLoader, true);
   }
 
   @Override
@@ -284,7 +310,7 @@ public abstract class AbstractUnitOfWork<E extends Exception>
 
   @Override
   public Cache<String, Object> getCache() {
-      return statementCache;
+    return statementCache;
   }
 
   @Override
@@ -354,10 +380,10 @@ public abstract class AbstractUnitOfWork<E extends Exception>
                   applyPostCommitFunctions("aborted", abortThunks);
                 });
 
-          elapsedTime.stop();
-          if (LOG.isInfoEnabled()) {
-              LOG.info(logTimers("aborted"));
-          }
+        elapsedTime.stop();
+        if (LOG.isInfoEnabled()) {
+          LOG.info(logTimers("aborted"));
+        }
       }
 
       return new PostCommitFunction(this, null, null, false);
@@ -378,12 +404,13 @@ public abstract class AbstractUnitOfWork<E extends Exception>
         // Merge our statement cache into the session cache if it exists.
         CacheManager cacheManager = session.getCacheManager();
         if (cacheManager != null) {
-          for (Map.Entry<String, Object> entry : (Set<Map.Entry<String, Object>>)statementCache.<Map>unwrap(Map.class).entrySet()) {
+          for (Map.Entry<String, Object> entry :
+              (Set<Map.Entry<String, Object>>) statementCache.<Map>unwrap(Map.class).entrySet()) {
             String[] keyParts = entry.getKey().split("\\.");
             if (keyParts.length == 2) {
               String cacheName = keyParts[0];
               String key = keyParts[1];
-                if (!StringUtils.isBlank(cacheName) && !StringUtils.isBlank(key)) {
+              if (!StringUtils.isBlank(cacheName) && !StringUtils.isBlank(key)) {
                 Cache<Object, Object> cache = cacheManager.getCache(cacheName);
                 if (cache != null) {
                   Object value = entry.getValue();
@@ -477,10 +504,10 @@ public abstract class AbstractUnitOfWork<E extends Exception>
               });
 
       if (parent == null) {
-          elapsedTime.stop();
-          if (LOG.isInfoEnabled()) {
-              LOG.info(logTimers("aborted"));
-          }
+        elapsedTime.stop();
+        if (LOG.isInfoEnabled()) {
+          LOG.info(logTimers("aborted"));
+        }
       }
 
       // TODO(gburd): when we integrate the transaction support we'll need to...

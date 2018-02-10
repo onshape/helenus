@@ -143,6 +143,8 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
     Widget w1, w1a, w2, w3, w4;
     UUID key1 = UUIDs.timeBased();
     UUID key2 = UUIDs.timeBased();
+    String cacheKey1 = MappingUtil.getTableName(Widget.class, false) + "." + key1.toString();
+    String cacheKey2 = MappingUtil.getTableName(Widget.class, false) + "." + key2.toString();
 
     // This should inserted Widget, and not cache it in uow1.
     try (UnitOfWork uow1 = session.begin()) {
@@ -156,6 +158,8 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .value(widget::c, RandomString.make(10))
               .value(widget::d, RandomString.make(10))
               .sync(uow1);
+      uow1.getCache().put(cacheKey1, w1);
+      Assert.assertEquals(w1, uow1.getCache().get(cacheKey1));
 
       try (UnitOfWork uow2 = session.begin(uow1)) {
 
@@ -180,6 +184,7 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
                 .orElse(null);
 
         Assert.assertEquals(w1, w2);
+        uow2.getCache().put(cacheKey2, w2);
 
         w3 =
             session
@@ -192,6 +197,8 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
                 .value(widget::d, RandomString.make(10))
                 .sync(uow2);
 
+        Assert.assertEquals(w1, uow2.getCache().get(cacheKey1));
+        Assert.assertEquals(w2, uow2.getCache().get(cacheKey2));
         uow2.commit()
             .andThen(
                 () -> {
@@ -378,6 +385,7 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
     Widget w1, w2, w3, w4, w5, w6;
     Long committedAt = 0L;
     UUID key = UUIDs.timeBased();
+    String cacheKey = MappingUtil.getTableName(Widget.class, false) + "." + key.toString();
 
     try (UnitOfWork uow = session.begin()) {
       w1 =
@@ -392,6 +400,7 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .batch(uow);
       Assert.assertTrue(0L == w1.writtenAt(widget::name));
       Assert.assertTrue(0 == w1.ttlOf(widget::name));
+      uow.getCache().put(cacheKey, w1);
       w2 =
           session
               .<Widget>update(w1)
@@ -424,6 +433,7 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
               .value(widget::d, RandomString.make(10))
               .batch(uow);
 
+      uow.getCache().put(cacheKey, w1);
       uow.commit();
       committedAt = uow.committedAt();
       Date d = new Date(committedAt * 1000);

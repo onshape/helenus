@@ -20,9 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
-
 import javax.cache.Cache;
-
 import net.helenus.core.cache.Facet;
 import net.helenus.core.operation.AbstractOperation;
 
