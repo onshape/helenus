@@ -20,20 +20,53 @@ import net.helenus.core.Getter;
 public interface Entity {
   String WRITTEN_AT_METHOD = "writtenAt";
   String TTL_OF_METHOD = "ttlOf";
+  String TOKEN_OF_METHOD = "tokenOf";
 
+    /**
+     * The write time for the property in question referenced by the getter.
+     *
+     * @param getter the property getter
+     * @return the timestamp associated with the property identified by the getter
+     */
   default Long writtenAt(Getter getter) {
     return 0L;
   }
 
+    /**
+     * The write time for the property in question referenced by the property name.
+     *
+     * @param prop the name of a property in this entity
+     * @return the timestamp associated with the property identified by the property name if it exists
+     */
   default Long writtenAt(String prop) {
     return 0L;
   };
 
+    /**
+     * The time-to-live for the property in question referenced by the getter.
+     *
+     * @param getter the property getter
+     * @return the time-to-live in seconds associated with the property identified by the getter
+     */
   default Integer ttlOf(Getter getter) {
     return 0;
   };
 
+    /**
+     * The time-to-live for the property in question referenced by the property name.
+     *
+     * @param prop the name of a property in this entity
+     * @return the time-to-live in seconds associated with the property identified by the property name if it exists
+     */
   default Integer ttlOf(String prop) {
     return 0;
   };
+
+    /**
+     * The token (partition identifier) for this entity which can change over time if
+     * the cluster grows or shrinks but should be stable otherwise.
+     *
+     * @return the token for the entity
+     */
+  default Long tokenOf() { return 0L; }
 }

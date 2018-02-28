@@ -147,6 +147,14 @@ public class MapperInvocationHandler<E> implements InvocationHandler, Serializab
       return 0L;
     }
 
+    if (Entity.TOKEN_OF_METHOD.equals(methodName) && method.getParameterCount() == 0) {
+        Long v = (Long) src.get("");
+        if (v != null) {
+            return v;
+        }
+        return 0L;
+    }
+
     if (Entity.TTL_OF_METHOD.equals(methodName) && method.getParameterCount() == 1) {
       final String key;
       if (args[0] instanceof String) {
