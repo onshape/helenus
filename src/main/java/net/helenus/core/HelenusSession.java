@@ -285,7 +285,6 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
             pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
         if (entity.isCacheable()) {
           List<Facet> boundFacets = new ArrayList<>();
-          String tableName = CacheUtil.schemaName(boundFacets);
           for (Facet facet : entity.getFacets()) {
             if (facet instanceof UnboundFacet) {
               UnboundFacet unboundFacet = (UnboundFacet) facet;
@@ -313,6 +312,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
             }
           }
           List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
+          String tableName = CacheUtil.schemaName(boundFacets);
           replaceCachedFacetValues(pojo, tableName, facetCombinations);
         }
       }
@@ -345,9 +345,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
           if (pojo == null || pojo == HelenusSession.deleted) {
             cache.remove(cacheKey);
           } else {
-            if (pojo != null) {
-              cache.put(cacheKey, pojo);
-            }
+            cache.put(cacheKey, pojo);
           }
         }
       }
