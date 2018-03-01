@@ -345,7 +345,9 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
           if (pojo == null || pojo == HelenusSession.deleted) {
             cache.remove(cacheKey);
           } else {
-            cache.put(cacheKey, pojo);
+            if (pojo != null) {
+              cache.put(cacheKey, pojo);
+            }
           }
         }
       }
