@@ -474,10 +474,12 @@ public abstract class AbstractUnitOfWork<E extends Exception>
   }
 
   private void addBatched(BatchOperation batch) {
-    if (this.batch == null) {
-      this.batch = batch;
-    } else {
-      this.batch.addAll(batch);
+    if (batch != null) {
+      if (this.batch == null) {
+        this.batch = batch;
+      } else {
+        this.batch.addAll(batch);
+      }
     }
   }
 
