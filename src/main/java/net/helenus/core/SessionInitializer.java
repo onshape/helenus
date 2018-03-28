@@ -15,7 +15,6 @@
  */
 package net.helenus.core;
 
-import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -47,10 +46,8 @@ public final class SessionInitializer extends AbstractSessionOperations {
   private ConsistencyLevel consistencyLevel;
   private boolean idempotent = false;
   private MetricRegistry metricRegistry = new MetricRegistry();
-  private Tracer zipkinTracer;
   private PrintStream printStream = System.out;
   private Executor executor = MoreExecutors.directExecutor();
-  private Class<? extends UnitOfWork> unitOfWorkClass = UnitOfWorkImpl.class;
   private SessionRepositoryBuilder sessionRepository;
   private boolean dropUnusedColumns = false;
   private boolean dropUnusedIndexes = false;
@@ -128,16 +125,6 @@ public final class SessionInitializer extends AbstractSessionOperations {
 
   public SessionInitializer metricRegistry(MetricRegistry metricRegistry) {
     this.metricRegistry = metricRegistry;
-    return this;
-  }
-
-  public SessionInitializer zipkinTracer(Tracer tracer) {
-    this.zipkinTracer = tracer;
-    return this;
-  }
-
-  public SessionInitializer setUnitOfWorkClass(Class<? extends UnitOfWork> e) {
-    this.unitOfWorkClass = e;
     return this;
   }
 
@@ -292,10 +279,8 @@ public final class SessionInitializer extends AbstractSessionOperations {
         autoDdl == AutoDdl.CREATE_DROP,
         consistencyLevel,
         idempotent,
-        unitOfWorkClass,
         cacheManager,
-        metricRegistry,
-        zipkinTracer);
+        metricRegistry);
   }
 
   private void initialize() {

@@ -15,8 +15,6 @@
  */
 package net.helenus.core.operation;
 
-import brave.Tracer;
-import brave.propagation.TraceContext;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.RegularStatement;
@@ -254,17 +252,6 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     return statement;
   }
 
-  public O zipkinContext(TraceContext traceContext) {
-    if (traceContext != null) {
-      Tracer tracer = this.sessionOps.getZipkinTracer();
-      if (tracer != null) {
-        this.traceContext = traceContext;
-      }
-    }
-
-    return (O) this;
-  }
-
   @Override
   protected boolean isIdempotentOperation() {
     return idempotent;
@@ -317,7 +304,7 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     return ignoreCache;
   }
 
-  protected E checkCache(UnitOfWork<?> uow, List<Facet> facets) {
+  protected E checkCache(UnitOfWork uow, List<Facet> facets) {
     E result = null;
     Optional<Object> optionalCachedResult = Optional.empty();
 
@@ -331,7 +318,7 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     return result;
   }
 
-  protected Object cacheUpdate(UnitOfWork<?> uow, E pojo, List<Facet> identifyingFacets) {
+  protected Object cacheUpdate(UnitOfWork uow, E pojo, List<Facet> identifyingFacets) {
     List<Facet> facets = new ArrayList<>();
     Map<String, Object> valueMap =
         pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;

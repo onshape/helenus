@@ -17,19 +17,14 @@ package net.helenus.core;
 
 import static net.helenus.core.Query.eq;
 
-import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.collect.Table;
 import java.io.Closeable;
 import java.io.PrintStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
@@ -48,24 +43,16 @@ import net.helenus.support.*;
 import net.helenus.support.Fun.Tuple1;
 import net.helenus.support.Fun.Tuple2;
 import net.helenus.support.Fun.Tuple6;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class HelenusSession extends AbstractSessionOperations implements Closeable {
-
-  private static final Logger LOG = LoggerFactory.getLogger(HelenusSession.class);
   public static final Object deleted = new Object();
-  private static final Pattern classNameRegex =
-      Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
   private final Session session;
   private final CodecRegistry registry;
   private final ConsistencyLevel defaultConsistencyLevel;
   private final boolean defaultQueryIdempotency;
   private final MetricRegistry metricRegistry;
-  private final Tracer zipkinTracer;
   private final PrintStream printStream;
-  private final Class<? extends UnitOfWork> unitOfWorkClass;
   private final SessionRepository sessionRepository;
   private final Executor executor;
   private final boolean dropSchemaOnClose;
@@ -89,10 +76,8 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
       boolean dropSchemaOnClose,
       ConsistencyLevel consistencyLevel,
       boolean defaultQueryIdempotency,
-      Class<? extends UnitOfWork> unitOfWorkClass,
       CacheManager cacheManager,
-      MetricRegistry metricRegistry,
-      Tracer tracer) {
+      MetricRegistry metricRegistry) {
     this.session = session;
     this.registry = registry == null ? CodecRegistry.DEFAULT_INSTANCE : registry;
     this.usingKeyspace =
@@ -107,14 +92,20 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     this.dropSchemaOnClose = dropSchemaOnClose;
     this.defaultConsistencyLevel = consistencyLevel;
     this.defaultQueryIdempotency = defaultQueryIdempotency;
-    this.unitOfWorkClass = unitOfWorkClass;
     this.metricRegistry = metricRegistry;
-    this.zipkinTracer = tracer;
     this.cacheManager = cacheManager;
 
     this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
     this.valuePreparer = new StatementColumnValuePreparer(this.sessionRepository);
     this.metadata = session == null ? null : session.getCluster().getMetadata();
+  }
+
+  public UnitOfWork begin() {
+    return new UnitOfWork(this).begin();
+  }
+
+  public UnitOfWork begin(UnitOfWork parent) {
+    return new UnitOfWork(this, parent).begin();
   }
 
   @Override
@@ -185,11 +176,6 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   @Override
   public ColumnValuePreparer getValuePreparer() {
     return valuePreparer;
-  }
-
-  @Override
-  public Tracer getZipkinTracer() {
-    return zipkinTracer;
   }
 
   @Override
@@ -358,70 +344,6 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   public Metadata getMetadata() {
     return metadata;
-  }
-
-  public UnitOfWork begin() {
-    return this.begin(null);
-  }
-
-  private String extractClassNameFromStackFrame(String classNameOnStack) {
-    String name = null;
-    Matcher m = classNameRegex.matcher(classNameOnStack);
-    if (m.find()) {
-      name = (m.group(1) != null) ? m.group(1) : ((m.group(2) != null) ? m.group(2) : name);
-    } else {
-      name = classNameOnStack;
-    }
-    return name;
-  }
-
-  public synchronized UnitOfWork begin(UnitOfWork parent) {
-    try {
-      Class<? extends UnitOfWork> clazz = unitOfWorkClass;
-      Constructor<? extends UnitOfWork> ctor =
-          clazz.getConstructor(HelenusSession.class, UnitOfWork.class);
-      UnitOfWork uow = ctor.newInstance(this, parent);
-      if (LOG.isInfoEnabled() && uow.getPurpose() == null) {
-        StringBuilder purpose = null;
-        int frame = 0;
-        StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-        String targetClassName = HelenusSession.class.getSimpleName();
-        String stackClassName = null;
-        do {
-          frame++;
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-        } while (!stackClassName.equals(targetClassName) && frame < trace.length);
-        do {
-          frame++;
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-        } while (stackClassName.equals(targetClassName) && frame < trace.length);
-        if (frame < trace.length) {
-          purpose =
-              new StringBuilder()
-                  .append(trace[frame].getClassName())
-                  .append(".")
-                  .append(trace[frame].getMethodName())
-                  .append("(")
-                  .append(trace[frame].getFileName())
-                  .append(":")
-                  .append(trace[frame].getLineNumber())
-                  .append(")");
-          uow.setPurpose(purpose.toString());
-        }
-      }
-      if (parent != null) {
-        parent.addNestedUnitOfWork(uow);
-      }
-      return uow.begin();
-    } catch (NoSuchMethodException
-        | InvocationTargetException
-        | InstantiationException
-        | IllegalAccessException e) {
-      throw new HelenusException(
-          String.format(
-              "Unable to instantiate %s as a UnitOfWork.", unitOfWorkClass.getSimpleName()),
-          e);
-    }
   }
 
   public <E> SelectOperation<E> select(E pojo) {

@@ -15,9 +15,6 @@
  */
 package net.helenus.core.operation;
 
-import brave.Span;
-import brave.Tracer;
-import brave.propagation.TraceContext;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
@@ -43,7 +40,6 @@ public abstract class Operation<E> {
 
   protected final AbstractSessionOperations sessionOps;
   protected boolean showValues;
-  protected TraceContext traceContext;
   protected long queryExecutionTimeout = 10;
   protected TimeUnit queryTimeoutUnits = TimeUnit.SECONDS;
   protected final Meter uowCacheHits;
@@ -96,101 +92,79 @@ public abstract class Operation<E> {
   public ResultSet execute(
       AbstractSessionOperations session,
       UnitOfWork uow,
-      TraceContext traceContext,
       long timeout,
       TimeUnit units,
       boolean showValues,
       boolean cached)
       throws TimeoutException {
 
-    // Start recording in a Zipkin sub-span our execution time to perform this operation.
-    Tracer tracer = session.getZipkinTracer();
-    Span span = null;
-    if (tracer != null && traceContext != null) {
-      span = tracer.newChild(traceContext);
+    Statement statement = options(buildStatement(cached));
+
+    if (session.isShowCql()) {
+      String stmt =
+          (this instanceof BatchOperation)
+              ? queryString((BatchOperation) this, showValues)
+              : queryString(statement, showValues);
+      session.getPrintStream().println(stmt);
+    } else if (LOG.isDebugEnabled()) {
+      String stmt =
+          (this instanceof BatchOperation)
+              ? queryString((BatchOperation) this, showValues)
+              : queryString(statement, showValues);
+      LOG.info("CQL> " + stmt);
     }
 
+    Stopwatch timer = Stopwatch.createStarted();
     try {
-
-      if (span != null) {
-        span.name("cassandra");
-        span.start();
-      }
-
-      Statement statement = options(buildStatement(cached));
-
-      if (session.isShowCql()) {
-        String stmt =
-            (this instanceof BatchOperation)
-                ? queryString((BatchOperation) this, showValues)
-                : queryString(statement, showValues);
-        session.getPrintStream().println(stmt);
-      } else if (LOG.isDebugEnabled()) {
-        String stmt =
-            (this instanceof BatchOperation)
-                ? queryString((BatchOperation) this, showValues)
-                : queryString(statement, showValues);
-        LOG.info("CQL> " + stmt);
-      }
-
-      Stopwatch timer = Stopwatch.createStarted();
-      try {
-        ResultSetFuture futureResultSet = session.executeAsync(statement, uow, timer);
-        if (uow != null) uow.recordCacheAndDatabaseOperationCount(0, 1);
-        ResultSet resultSet = futureResultSet.getUninterruptibly(timeout, units);
-        ColumnDefinitions columnDefinitions = resultSet.getColumnDefinitions();
-        if (LOG.isDebugEnabled()) {
-          ExecutionInfo ei = resultSet.getExecutionInfo();
-          Host qh = ei.getQueriedHost();
-          String oh =
-              ei.getTriedHosts()
-                  .stream()
-                  .map(Host::getAddress)
-                  .map(InetAddress::toString)
-                  .collect(Collectors.joining(", "));
-          ConsistencyLevel cl = ei.getAchievedConsistencyLevel();
-          if (cl == null) {
-            cl = statement.getConsistencyLevel();
-          }
-          int se = ei.getSpeculativeExecutions();
-          String warn = ei.getWarnings().stream().collect(Collectors.joining(", "));
-          String ri =
-              String.format(
-                  "%s %s ~%s %s %s%s%sspec-retries: %d",
-                  "server v" + qh.getCassandraVersion(),
-                  qh.getAddress().toString(),
-                  (oh != null && !oh.equals("")) ? " [tried: " + oh + "]" : "",
-                  qh.getDatacenter(),
-                  qh.getRack(),
-                  (cl != null)
-                      ? (" consistency: "
-                          + cl.name()
-                          + " "
-                          + (cl.isDCLocal() ? " DC " : "")
-                          + (cl.isSerial() ? " SC " : ""))
-                      : "",
-                  (warn != null && !warn.equals("")) ? ": " + warn : "",
-                  se);
-          if (uow != null) uow.setInfo(ri);
-          else LOG.debug(ri);
+      ResultSetFuture futureResultSet = session.executeAsync(statement, uow, timer);
+      if (uow != null) uow.recordCacheAndDatabaseOperationCount(0, 1);
+      ResultSet resultSet = futureResultSet.getUninterruptibly(timeout, units);
+      ColumnDefinitions columnDefinitions = resultSet.getColumnDefinitions();
+      if (LOG.isDebugEnabled()) {
+        ExecutionInfo ei = resultSet.getExecutionInfo();
+        Host qh = ei.getQueriedHost();
+        String oh =
+            ei.getTriedHosts()
+                .stream()
+                .map(Host::getAddress)
+                .map(InetAddress::toString)
+                .collect(Collectors.joining(", "));
+        ConsistencyLevel cl = ei.getAchievedConsistencyLevel();
+        if (cl == null) {
+          cl = statement.getConsistencyLevel();
         }
-        if (!resultSet.wasApplied()
-            && !(columnDefinitions.size() > 1 || !columnDefinitions.contains("[applied]"))) {
-          throw new HelenusException("Operation Failed");
-        }
-        return resultSet;
-
-      } finally {
-        timer.stop();
-        if (uow != null) uow.addDatabaseTime("Cassandra", timer);
-        log(statement, uow, timer, showValues);
+        int se = ei.getSpeculativeExecutions();
+        String warn = ei.getWarnings().stream().collect(Collectors.joining(", "));
+        String ri =
+            String.format(
+                "%s %s ~%s %s %s%s%sspec-retries: %d",
+                "server v" + qh.getCassandraVersion(),
+                qh.getAddress().toString(),
+                (oh != null && !oh.equals("")) ? " [tried: " + oh + "]" : "",
+                qh.getDatacenter(),
+                qh.getRack(),
+                (cl != null)
+                    ? (" consistency: "
+                        + cl.name()
+                        + " "
+                        + (cl.isDCLocal() ? " DC " : "")
+                        + (cl.isSerial() ? " SC " : ""))
+                    : "",
+                (warn != null && !warn.equals("")) ? ": " + warn : "",
+                se);
+        if (uow != null) uow.setInfo(ri);
+        else LOG.debug(ri);
       }
+      if (!resultSet.wasApplied()
+          && !(columnDefinitions.size() > 1 || !columnDefinitions.contains("[applied]"))) {
+        throw new HelenusException("Operation Failed");
+      }
+      return resultSet;
 
     } finally {
-
-      if (span != null) {
-        span.finish();
-      }
+      timer.stop();
+      if (uow != null) uow.addDatabaseTime("Cassandra", timer);
+      log(statement, uow, timer, showValues);
     }
   }
 

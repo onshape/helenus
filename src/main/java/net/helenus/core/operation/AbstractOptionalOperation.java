@@ -98,7 +98,6 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
             this.execute(
                 sessionOps,
                 null,
-                traceContext,
                 queryExecutionTimeout,
                 queryTimeoutUnits,
                 showValues,
@@ -125,7 +124,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
     }
   }
 
-  public Optional<E> sync(UnitOfWork<?> uow) throws TimeoutException {
+  public Optional<E> sync(UnitOfWork uow) throws TimeoutException {
     if (uow == null) return sync();
 
     final Timer.Context context = requestLatency.time();
@@ -206,14 +205,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 
         // Formulate the query and execute it against the Cassandra cluster.
         ResultSet resultSet =
-            execute(
-                sessionOps,
-                uow,
-                traceContext,
-                queryExecutionTimeout,
-                queryTimeoutUnits,
-                showValues,
-                true);
+            execute(sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, true);
 
         // Transform the query result set into the desired shape.
         result = transform(resultSet);
@@ -245,7 +237,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
         });
   }
 
-  public CompletableFuture<Optional<E>> async(UnitOfWork<?> uow) {
+  public CompletableFuture<Optional<E>> async(UnitOfWork uow) {
     if (uow == null) return async();
     CompletableFuture<Optional<E>> f =
         CompletableFuture.<Optional<E>>supplyAsync(

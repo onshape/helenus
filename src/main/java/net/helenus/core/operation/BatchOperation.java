@@ -72,13 +72,7 @@ public class BatchOperation extends Operation<Long> {
       batch.setDefaultTimestamp(timestampGenerator.next());
       ResultSet resultSet =
           this.execute(
-              sessionOps,
-              null,
-              traceContext,
-              queryExecutionTimeout,
-              queryTimeoutUnits,
-              showValues,
-              false);
+              sessionOps, null, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
       if (!resultSet.wasApplied()) {
         throw new HelenusException("Failed to apply batch.");
       }
@@ -88,7 +82,7 @@ public class BatchOperation extends Operation<Long> {
     return batch.getDefaultTimestamp();
   }
 
-  public Long sync(UnitOfWork<?> uow) throws TimeoutException {
+  public Long sync(UnitOfWork uow) throws TimeoutException {
     if (operations.size() == 0) return 0L;
     if (uow == null) return sync();
 
@@ -99,13 +93,7 @@ public class BatchOperation extends Operation<Long> {
       batch.setDefaultTimestamp(timestampGenerator.next());
       ResultSet resultSet =
           this.execute(
-              sessionOps,
-              uow,
-              traceContext,
-              queryExecutionTimeout,
-              queryTimeoutUnits,
-              showValues,
-              false);
+              sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
       if (!resultSet.wasApplied()) {
         throw new HelenusException("Failed to apply batch.");
       }

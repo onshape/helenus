@@ -91,7 +91,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
               () -> {
                 q.add("1");
               })
-          .exceptionally(
+          .orElse(
               () -> {
                 q.add("a");
               });
@@ -101,7 +101,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
               () -> {
                 q.add("2");
               })
-          .exceptionally(
+          .orElse(
               () -> {
                 q.add("b");
               });
@@ -110,7 +110,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
               () -> {
                 q.add("3");
               })
-          .exceptionally(
+          .orElse(
               () -> {
                 q.add("c");
               });
@@ -119,7 +119,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
               () -> {
                 q.add("4");
               })
-          .exceptionally(
+          .orElse(
               () -> {
                 q.add("d");
               });
@@ -132,7 +132,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
             () -> {
               q.add("5");
             })
-        .exceptionally(
+        .orElse(
             () -> {
               q.add("e");
             });

@@ -154,19 +154,7 @@
             <version>20.0</version>
         </dependency>
 
-        <!-- Metrics and tracing -->
-        <dependency>
-            <groupId>io.zipkin.java</groupId>
-            <artifactId>zipkin</artifactId>
-            <version>1.29.2</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.zipkin.brave</groupId>
-            <artifactId>brave</artifactId>
-            <version>4.0.6</version>
-        </dependency>
-
+        <!-- Metrics -->
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
             <artifactId>metrics-core</artifactId>

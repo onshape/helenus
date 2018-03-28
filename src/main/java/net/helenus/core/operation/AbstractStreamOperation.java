@@ -99,7 +99,6 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
             this.execute(
                 sessionOps,
                 null,
-                traceContext,
                 queryExecutionTimeout,
                 queryTimeoutUnits,
                 showValues,
@@ -203,14 +202,7 @@ public abstract class AbstractStreamOperation<E, O extends AbstractStreamOperati
       // Check to see if we fetched the object from the cache
       if (resultStream == null) {
         ResultSet resultSet =
-            execute(
-                sessionOps,
-                uow,
-                traceContext,
-                queryExecutionTimeout,
-                queryTimeoutUnits,
-                showValues,
-                true);
+            execute(sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, true);
         resultStream = transform(resultSet);
       }
 

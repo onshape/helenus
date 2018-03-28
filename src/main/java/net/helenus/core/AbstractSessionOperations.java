@@ -15,7 +15,6 @@
  */
 package net.helenus.core;
 
-import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.base.Stopwatch;
@@ -108,10 +107,6 @@ public abstract class AbstractSessionOperations {
     } catch (RuntimeException e) {
       throw translateException(e);
     }
-  }
-
-  public Tracer getZipkinTracer() {
-    return null;
   }
 
   public MetricRegistry getMetricRegistry() {

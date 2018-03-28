@@ -41,13 +41,7 @@ public abstract class AbstractOperation<E, O extends AbstractOperation<E, O>>
     try {
       ResultSet resultSet =
           this.execute(
-              sessionOps,
-              null,
-              traceContext,
-              queryExecutionTimeout,
-              queryTimeoutUnits,
-              showValues,
-              false);
+              sessionOps, null, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
       return transform(resultSet);
     } finally {
       context.stop();
@@ -60,14 +54,7 @@ public abstract class AbstractOperation<E, O extends AbstractOperation<E, O>>
     final Timer.Context context = requestLatency.time();
     try {
       ResultSet resultSet =
-          execute(
-              sessionOps,
-              uow,
-              traceContext,
-              queryExecutionTimeout,
-              queryTimeoutUnits,
-              showValues,
-              true);
+          execute(sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, true);
       E result = transform(resultSet);
       return result;
     } finally {

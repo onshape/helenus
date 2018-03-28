@@ -33,7 +33,7 @@ public class PostCommitFunction<T, R> implements java.util.function.Function<T, 
     return this;
   }
 
-  public PostCommitFunction<T, R> exceptionally(CommitThunk after) {
+  public PostCommitFunction<T, R> orElse(CommitThunk after) {
     Objects.requireNonNull(after);
     if (abortThunks == null) {
       if (!committed) {
