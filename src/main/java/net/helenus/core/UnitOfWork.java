@@ -53,11 +53,11 @@ public class UnitOfWork implements AutoCloseable {
   private static final Pattern classNameRegex =
       Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
-  private final List<UnitOfWork> nested = new ArrayList<>();
-  private final HelenusSession session;
   public final UnitOfWork parent;
+  private final List<UnitOfWork> nested = new ArrayList<>();
   private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
   private final MapCache<String, Object> statementCache;
+  protected final HelenusSession session;
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
   protected String info;
