@@ -14,12 +14,20 @@ Operation/
 |   |   `-- BoundOptionalOperation
 |   `-- AbstractStreamOperation
 |       |-- AbstractFilterStreamOperation
-|       |   |-- SelectOperation
+    |       |   |-- SelectOperation
 |       |   `-- SelectTransformingOperation
 |       `-- BoundStreamOperation
 |-- PreparedOperation
 |-- PreparedOptionalOperation
 `-- PreparedStreamOperation
+
+
+----
+@CompoundIndex()
+create a new col in the same table called __idx_a_b_c that the hash of the concatenated values in that order is stored, create a normal index for that (CREATE INDEX ...)
+if a query matches that set of columns then use that indexed col to fetch the desired results from that table
+could also work with .in() query if materialized view exists
+----
 
 
     // TODO(gburd): create a statement that matches one that wasn't prepared
@@ -183,3 +191,12 @@ InsertOperation
 		if (resultType == iface) {
 			if (values.size() > 0 && includesNonIdentityValues) {
 				boolean immutable = iface.isAssignableFrom(Drafted.class);
+-------------------
+
+    final Object value;
+    if (method.getParameterCount() == 1 && args[0] instanceof Boolean && src instanceof ValueProviderMap) {
+      value = ((ValueProviderMap)src).get(methodName, (Boolean)args[0]);
+    } else {
+      value = src.get(methodName);
+    }
+--------------------

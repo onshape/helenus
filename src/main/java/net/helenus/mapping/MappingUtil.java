@@ -16,11 +16,12 @@
 package net.helenus.mapping;
 
 import java.lang.annotation.Annotation;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import javax.validation.Constraint;
 import javax.validation.ConstraintValidator;
 import net.helenus.core.Getter;
@@ -122,8 +123,27 @@ public final class MappingUtil {
     return false;
   }
 
+  public static boolean idempotent(Method getterMethod) {
+    Column column = getterMethod.getDeclaredAnnotation(Column.class);
+
+    if (column != null) {
+      return column.idempotent();
+    }
+    return false;
+  }
+
   public static String getPropertyName(Method getter) {
     return getter.getName();
+  }
+
+  public static HelenusProperty getPropertyForColumn(HelenusEntity entity, String name) {
+    if (name == null) return null;
+    return entity
+        .getOrderedProperties()
+        .stream()
+        .filter(p -> p.getColumnName().equals(name))
+        .findFirst()
+        .orElse(null);
   }
 
   public static String getDefaultColumnName(Method getter) {
@@ -284,28 +304,6 @@ public final class MappingUtil {
     }
   }
 
-  // https://stackoverflow.com/a/4882306/366692
-  public static <T> T clone(T object) throws CloneNotSupportedException {
-    Object clone = null;
-
-    // Use reflection, because there is no other way
-    try {
-      Method method = object.getClass().getMethod("clone");
-      clone = method.invoke(object);
-    } catch (InvocationTargetException e) {
-      rethrow(e.getCause());
-    } catch (Exception cause) {
-      rethrow(cause);
-    }
-    if (object.getClass().isInstance(clone)) {
-      @SuppressWarnings("unchecked") // clone class <= object class <= T
-      T t = (T) clone;
-      return t;
-    } else {
-      throw new ClassCastException(clone.getClass().getName());
-    }
-  }
-
   private static void rethrow(Throwable cause) throws CloneNotSupportedException {
     if (cause instanceof RuntimeException) {
       throw (RuntimeException) cause;
@@ -319,5 +317,33 @@ public final class MappingUtil {
     CloneNotSupportedException e = new CloneNotSupportedException();
     e.initCause(cause);
     throw e;
+  }
+
+  public static boolean compareMaps(MapExportable me, Map<String, Object> m2) {
+    Map<String, Object> m1 = me.toMap();
+    List<String> matching =
+        m2.entrySet()
+            .stream()
+            .filter(e -> !e.getKey().matches("^_.*_(ttl|writeTime)$"))
+            .filter(
+                e -> {
+                  String k = e.getKey();
+                  if (m1.containsKey(k)) {
+                    Object o1 = e.getValue();
+                    Object o2 = m1.get(k);
+                    if (o1 == o2 || o1.equals(o2)) return true;
+                  }
+                  return false;
+                })
+            .map(e -> e.getKey())
+            .collect(Collectors.toList());
+    List<String> divergent =
+        m1.entrySet()
+            .stream()
+            .filter(e -> !e.getKey().matches("^_.*_(ttl|writeTime)$"))
+            .filter(e -> !matching.contains(e.getKey()))
+            .map(e -> e.getKey())
+            .collect(Collectors.toList());
+    return divergent.size() > 0 ? false : true;
   }
 }

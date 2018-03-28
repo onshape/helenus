@@ -19,6 +19,7 @@ import java.util.*;
 import net.helenus.core.*;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
+import net.helenus.core.reflect.HelenusPropertyNode;
 import net.helenus.mapping.HelenusProperty;
 
 public abstract class AbstractFilterOperation<E, O extends AbstractFilterOperation<E, O>>
@@ -106,6 +107,28 @@ public abstract class AbstractFilterOperation<E, O extends AbstractFilterOperati
       ifFilters = new LinkedList<Filter<?>>();
     }
     ifFilters.add(filter);
+  }
+
+  @Override
+  protected boolean isIdempotentOperation() {
+    if (filters == null) {
+      return super.isIdempotentOperation();
+    }
+
+    return filters
+            .stream()
+            .anyMatch(
+                filter -> {
+                  HelenusPropertyNode node = filter.getNode();
+                  if (node != null) {
+                    HelenusProperty prop = node.getProperty();
+                    if (prop != null) {
+                      return prop.isIdempotent();
+                    }
+                  }
+                  return false;
+                })
+        || super.isIdempotentOperation();
   }
 
   protected List<Facet> bindFacetValues(List<Facet> facets) {

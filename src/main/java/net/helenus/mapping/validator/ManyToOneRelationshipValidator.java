@@ -13,15 +13,21 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.core.reflect;
+package net.helenus.mapping.validator;
 
-import java.util.Set;
+import javax.validation.ConstraintValidatorContext;
+import net.helenus.mapping.annotation.Constraints;
 
-public interface Drafted<T> extends MapExportable {
+public class ManyToOneRelationshipValidator extends RelationshipValidator<Constraints.ManyToOne> {
 
-  Set<String> mutated();
+  @Override
+  public void initialize(Constraints.ManyToOne constraintAnnotation) {
+    super.initialize(constraintAnnotation);
+  }
 
-  T build();
-
-  Set<String> read();
+  @Override
+  public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+    // TODO(gburd): check that the list contains valid property names.
+    return true;
+  }
 }

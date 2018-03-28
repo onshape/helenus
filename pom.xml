@@ -109,19 +109,19 @@
         <dependency>
             <groupId>com.datastax.cassandra</groupId>
             <artifactId>cassandra-driver-core</artifactId>
-            <version>3.3.0</version>
+            <version>3.3.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.datastax.cassandra</groupId>
+            <artifactId>cassandra-driver-extras</artifactId>
+            <version>3.3.2</version>
         </dependency>
 
         <dependency>
             <groupId>com.diffplug.durian</groupId>
             <artifactId>durian</artifactId>
             <version>3.4.0</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.aspectj</groupId>
-            <artifactId>aspectjrt</artifactId>
-            <version>1.8.10</version>
         </dependency>
 
         <dependency>
@@ -143,24 +143,18 @@
         </dependency>
 
         <dependency>
+            <groupId>javax.cache</groupId>
+            <artifactId>cache-api</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <version>20.0</version>
         </dependency>
 
-        <!-- Metrics and tracing -->
-        <dependency>
-            <groupId>io.zipkin.java</groupId>
-            <artifactId>zipkin</artifactId>
-            <version>1.29.2</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.zipkin.brave</groupId>
-            <artifactId>brave</artifactId>
-            <version>4.0.6</version>
-        </dependency>
-
+        <!-- Metrics -->
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
             <artifactId>metrics-core</artifactId>
@@ -217,6 +211,24 @@
             <scope>test</scope>
         </dependency>
 
+
+        <dependency>
+            <groupId>ca.exprofesso</groupId>
+            <artifactId>guava-jcache</artifactId>
+            <version>1.0.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.cache</groupId>
+                    <artifactId>cache-api</artifactId>
+                </exclusion>
+            </exclusions>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
@@ -228,13 +240,6 @@
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.12</version>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>com.github.stephenc</groupId>
-            <artifactId>jamm</artifactId>
-            <version>0.2.5</version>
             <scope>test</scope>
         </dependency>
 
@@ -272,7 +277,6 @@
             <version>1.7.1</version>
             <scope>runtime</scope>
         </dependency>
-
     </dependencies>
 
     <build>

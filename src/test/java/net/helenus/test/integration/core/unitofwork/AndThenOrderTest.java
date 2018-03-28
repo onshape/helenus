@@ -90,22 +90,38 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
           .andThen(
               () -> {
                 q.add("1");
+              })
+          .orElse(
+              () -> {
+                q.add("a");
               });
       uow2 = session.begin(uow3);
       uow2.commit()
           .andThen(
               () -> {
                 q.add("2");
+              })
+          .orElse(
+              () -> {
+                q.add("b");
               });
       uow3.commit()
           .andThen(
               () -> {
                 q.add("3");
+              })
+          .orElse(
+              () -> {
+                q.add("c");
               });
       uow4.commit()
           .andThen(
               () -> {
                 q.add("4");
+              })
+          .orElse(
+              () -> {
+                q.add("d");
               });
       throw new Exception();
     } catch (Exception e) {
@@ -115,10 +131,15 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
         .andThen(
             () -> {
               q.add("5");
+            })
+        .orElse(
+            () -> {
+              q.add("e");
             });
 
     System.out.println(q);
-    Assert.assertTrue(q.isEmpty() == true);
+    Assert.assertTrue(
+        Arrays.equals(q.toArray(new String[5]), new String[] {"a", "b", "c", "d", "e"}));
   }
 
   @Test

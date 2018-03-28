@@ -24,15 +24,20 @@ import com.google.common.base.Function;
 import com.google.common.base.Stopwatch;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import java.io.Serializable;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
 import net.helenus.core.AbstractSessionOperations;
+import net.helenus.core.Helenus;
 import net.helenus.core.UnitOfWork;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
+import net.helenus.mapping.MappingUtil;
+import net.helenus.support.Fun;
+import org.apache.commons.lang3.SerializationUtils;
 
 public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOperation<E, O>>
     extends AbstractStatementOperation<E, O> {
@@ -64,20 +69,26 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
     try {
       Optional<E> result = Optional.empty();
       E cacheResult = null;
-      boolean updateCache = isSessionCacheable() && checkCache;
+      boolean updateCache = isSessionCacheable() && !ignoreCache();
 
-      if (checkCache && isSessionCacheable()) {
+      if (updateCache) {
         List<Facet> facets = bindFacetValues();
-        String tableName = CacheUtil.schemaName(facets);
-        cacheResult = (E) sessionOps.checkCache(tableName, facets);
-        if (cacheResult != null) {
-          result = Optional.of(cacheResult);
-          updateCache = false;
-          sessionCacheHits.mark();
-          cacheHits.mark();
+        if (facets != null && facets.size() > 0) {
+          if (facets.stream().filter(f -> !f.fixed()).distinct().count() > 0) {
+            String tableName = CacheUtil.schemaName(facets);
+            cacheResult = (E) sessionOps.checkCache(tableName, facets);
+            if (cacheResult != null) {
+              result = Optional.of(cacheResult);
+              updateCache = false;
+              sessionCacheHits.mark();
+              cacheHits.mark();
+            } else {
+              sessionCacheMiss.mark();
+              cacheMiss.mark();
+            }
+          }
         } else {
-          sessionCacheMiss.mark();
-          cacheMiss.mark();
+          //TODO(gburd): look in statement cache for results
         }
       }
 
@@ -87,20 +98,24 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
             this.execute(
                 sessionOps,
                 null,
-                traceContext,
                 queryExecutionTimeout,
                 queryTimeoutUnits,
                 showValues,
-                false);
+                isSessionCacheable());
 
         // Transform the query result set into the desired shape.
         result = transform(resultSet);
       }
 
       if (updateCache && result.isPresent()) {
-        List<Facet> facets = getFacets();
-        if (facets != null && facets.size() > 1) {
-          sessionOps.updateCache(result.get(), facets);
+        E r = result.get();
+        Class<?> resultClass = r.getClass();
+        if (!(resultClass.getEnclosingClass() != null
+            && resultClass.getEnclosingClass() == Fun.class)) {
+          List<Facet> facets = getFacets();
+          if (facets != null && facets.size() > 1) {
+            sessionOps.updateCache(r, facets);
+          }
         }
       }
       return result;
@@ -109,7 +124,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
     }
   }
 
-  public Optional<E> sync(UnitOfWork<?> uow) throws TimeoutException {
+  public Optional<E> sync(UnitOfWork uow) throws TimeoutException {
     if (uow == null) return sync();
 
     final Timer.Context context = requestLatency.time();
@@ -119,35 +134,54 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
       E cachedResult = null;
       final boolean updateCache;
 
-      if (checkCache) {
+      if (!ignoreCache()) {
         Stopwatch timer = Stopwatch.createStarted();
         try {
           List<Facet> facets = bindFacetValues();
-          if (facets != null) {
-            cachedResult = checkCache(uow, facets);
-            if (cachedResult != null) {
-              updateCache = false;
-              result = Optional.of(cachedResult);
-              uowCacheHits.mark();
-              cacheHits.mark();
-              uow.recordCacheAndDatabaseOperationCount(1, 0);
-            } else {
-              updateCache = true;
-              uowCacheMiss.mark();
-              if (isSessionCacheable()) {
-                String tableName = CacheUtil.schemaName(facets);
-                cachedResult = (E) sessionOps.checkCache(tableName, facets);
-                if (cachedResult != null) {
-                  result = Optional.of(cachedResult);
-                  sessionCacheHits.mark();
-                  cacheHits.mark();
-                  uow.recordCacheAndDatabaseOperationCount(1, 0);
+          if (facets != null && facets.size() > 0) {
+            if (facets.stream().filter(f -> !f.fixed()).distinct().count() > 0) {
+              cachedResult = checkCache(uow, facets);
+              if (cachedResult != null) {
+                updateCache = false;
+                result = Optional.of(cachedResult);
+                uowCacheHits.mark();
+                cacheHits.mark();
+                uow.recordCacheAndDatabaseOperationCount(1, 0);
+              } else {
+                uowCacheMiss.mark();
+                if (isSessionCacheable()) {
+                  String tableName = CacheUtil.schemaName(facets);
+                  cachedResult = (E) sessionOps.checkCache(tableName, facets);
+                  if (cachedResult != null) {
+                    Class<?> iface = MappingUtil.getMappingInterface(cachedResult);
+                    if (Helenus.entity(iface).isDraftable()) {
+                      result = Optional.of(cachedResult);
+                    } else {
+                      result =
+                          Optional.of(
+                              (E)
+                                  SerializationUtils.<Serializable>clone(
+                                      (Serializable) cachedResult));
+                    }
+                    updateCache = false;
+                    sessionCacheHits.mark();
+                    cacheHits.mark();
+                    uow.recordCacheAndDatabaseOperationCount(1, 0);
+                  } else {
+                    updateCache = true;
+                    sessionCacheMiss.mark();
+                    cacheMiss.mark();
+                    uow.recordCacheAndDatabaseOperationCount(-1, 0);
+                  }
                 } else {
-                  sessionCacheMiss.mark();
-                  cacheMiss.mark();
-                  uow.recordCacheAndDatabaseOperationCount(-1, 0);
+                  updateCache = false;
                 }
               }
+            } else {
+              //TODO(gburd): look in statement cache for results
+              updateCache = false; //true;
+              cacheMiss.mark();
+              uow.recordCacheAndDatabaseOperationCount(-1, 0);
             }
           } else {
             updateCache = false;
@@ -171,14 +205,7 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 
         // Formulate the query and execute it against the Cassandra cluster.
         ResultSet resultSet =
-            execute(
-                sessionOps,
-                uow,
-                traceContext,
-                queryExecutionTimeout,
-                queryTimeoutUnits,
-                showValues,
-                true);
+            execute(sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, true);
 
         // Transform the query result set into the desired shape.
         result = transform(resultSet);
@@ -186,8 +213,11 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
 
       // If we have a result, it wasn't from the UOW cache, and we're caching things
       // then we need to put this result into the cache for future requests to find.
-      if (updateCache && result.isPresent() && result.get() != deleted) {
-        cacheUpdate(uow, result.get(), getFacets());
+      if (updateCache && result.isPresent()) {
+        E r = result.get();
+        if (!(r instanceof Fun) && r != deleted) {
+          cacheUpdate(uow, r, getFacets());
+        }
       }
 
       return result;
@@ -207,15 +237,18 @@ public abstract class AbstractOptionalOperation<E, O extends AbstractOptionalOpe
         });
   }
 
-  public CompletableFuture<Optional<E>> async(UnitOfWork<?> uow) {
+  public CompletableFuture<Optional<E>> async(UnitOfWork uow) {
     if (uow == null) return async();
-    return CompletableFuture.<Optional<E>>supplyAsync(
-        () -> {
-          try {
-            return sync();
-          } catch (TimeoutException ex) {
-            throw new CompletionException(ex);
-          }
-        });
+    CompletableFuture<Optional<E>> f =
+        CompletableFuture.<Optional<E>>supplyAsync(
+            () -> {
+              try {
+                return sync();
+              } catch (TimeoutException ex) {
+                throw new CompletionException(ex);
+              }
+            });
+    uow.addFuture(f);
+    return f;
   }
 }

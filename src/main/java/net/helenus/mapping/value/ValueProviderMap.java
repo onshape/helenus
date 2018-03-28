@@ -15,11 +15,11 @@
  */
 package net.helenus.mapping.value;
 
+import com.google.common.collect.ImmutableMap;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import net.helenus.core.reflect.Drafted;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusProperty;
 import net.helenus.support.HelenusMappingException;
@@ -35,7 +35,7 @@ public final class ValueProviderMap implements Map<String, Object> {
     this.source = source;
     this.valueProvider = valueProvider;
     this.entity = entity;
-    this.immutable = entity.getMappingInterface().isAssignableFrom(Drafted.class);
+    this.immutable = entity.isDraftable();
   }
 
   private static void throwShouldNeverCall(String methodName) {
@@ -45,8 +45,7 @@ public final class ValueProviderMap implements Map<String, Object> {
             methodName));
   }
 
-  @Override
-  public Object get(Object key) {
+  public Object get(Object key, boolean immutable) {
     if (key instanceof String) {
       String name = (String) key;
       HelenusProperty prop = entity.getProperty(name);
@@ -55,6 +54,11 @@ public final class ValueProviderMap implements Map<String, Object> {
       }
     }
     return null;
+  }
+
+  @Override
+  public Object get(Object key) {
+    return get(key, this.immutable);
   }
 
   @Override
@@ -78,7 +82,7 @@ public final class ValueProviderMap implements Map<String, Object> {
 
   @Override
   public boolean containsKey(Object key) {
-    if (key instanceof Object) {
+    if (key instanceof String) {
       String s = (String) key;
       return keySet().contains(s);
     }
@@ -149,8 +153,10 @@ public final class ValueProviderMap implements Map<String, Object> {
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
-    if (o == null || (!o.getClass().isAssignableFrom(Map.class) && getClass() != o.getClass()))
-      return false;
+    if (o == null
+        || !((Map.class.isAssignableFrom(o.getClass())
+                || ImmutableMap.class.isAssignableFrom(o.getClass()))
+            || o.getClass().getSimpleName().equals("UnmodifiableMap"))) return false;
 
     Map that = (Map) o;
     if (this.size() != that.size()) return false;

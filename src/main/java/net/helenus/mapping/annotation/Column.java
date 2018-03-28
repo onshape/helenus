@@ -59,4 +59,13 @@ public @interface Column {
    * @return true if name have to be quoted
    */
   boolean forceQuote() default false;
+
+  /**
+   * Used to determine if mutations (insert, upsert, update) can be retried by the server. When all
+   * fields in a query are idempotent the query is marked idempotent. Optionally, a user can
+   * explicitly mark a query idempotent even if all fields are not marked as such.
+   *
+   * @return
+   */
+  boolean idempotent() default false;
 }

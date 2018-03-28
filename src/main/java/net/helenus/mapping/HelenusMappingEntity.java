@@ -31,6 +31,7 @@ import net.helenus.mapping.annotation.*;
 import net.helenus.mapping.validator.DistinctValidator;
 import net.helenus.support.HelenusMappingException;
 import org.apache.commons.lang3.ClassUtils;
+import org.apache.commons.lang3.StringUtils;
 
 public final class HelenusMappingEntity implements HelenusEntity {
 
@@ -38,6 +39,7 @@ public final class HelenusMappingEntity implements HelenusEntity {
   private final HelenusEntityType type;
   private final IdentityName name;
   private final boolean cacheable;
+  private final boolean draftable;
   private final ImmutableMap<String, Method> methods;
   private final ImmutableMap<String, HelenusProperty> props;
   private final ImmutableList<HelenusProperty> orderedProps;
@@ -111,9 +113,25 @@ public final class HelenusMappingEntity implements HelenusEntity {
     // Caching
     cacheable = (null != iface.getDeclaredAnnotation(Cacheable.class));
 
+    // Draft
+    Class<?> draft;
+    try {
+      draft = Class.forName(iface.getName() + "$Draft");
+    } catch (Exception ignored) {
+      draft = null;
+    }
+    draftable = (draft != null);
+
+    // Materialized view
     List<HelenusProperty> primaryKeyProperties = new ArrayList<>();
     ImmutableList.Builder<Facet> facetsBuilder = ImmutableList.builder();
-    facetsBuilder.add(new Facet("table", name.toCql()).setFixed());
+    if (iface.getDeclaredAnnotation(MaterializedView.class) == null) {
+      facetsBuilder.add(new Facet("table", name.toCql()).setFixed());
+    } else {
+      facetsBuilder.add(
+          new Facet("table", Helenus.entity(iface.getInterfaces()[0]).getName().toCql())
+              .setFixed());
+    }
     for (HelenusProperty prop : orderedProps) {
       switch (prop.getColumnType()) {
         case PARTITION_KEY:
@@ -127,8 +145,25 @@ public final class HelenusMappingEntity implements HelenusEntity {
           }
           for (ConstraintValidator<?, ?> constraint :
               MappingUtil.getValidators(prop.getGetterMethod())) {
-            if (constraint.getClass().isAssignableFrom(DistinctValidator.class)) {
-              UnboundFacet facet = new UnboundFacet(prop);
+            if (constraint instanceof DistinctValidator) {
+              DistinctValidator validator = (DistinctValidator) constraint;
+              String[] values = validator.constraintAnnotation.value();
+              UnboundFacet facet;
+              if (values != null && values.length >= 1 && !(StringUtils.isBlank(values[0]))) {
+                List<HelenusProperty> props = new ArrayList<HelenusProperty>(values.length + 1);
+                props.add(prop);
+                for (String value : values) {
+                  for (HelenusProperty p : orderedProps) {
+                    String name = p.getPropertyName();
+                    if (name.equals(value) && !name.equals(prop.getPropertyName())) {
+                      props.add(p);
+                    }
+                  }
+                }
+                facet = new UnboundFacet(props, validator.alone(), validator.combined());
+              } else {
+                facet = new UnboundFacet(prop, validator.alone(), validator.combined());
+              }
               facetsBuilder.add(facet);
               break;
             }
@@ -186,6 +221,11 @@ public final class HelenusMappingEntity implements HelenusEntity {
   @Override
   public boolean isCacheable() {
     return cacheable;
+  }
+
+  @Override
+  public boolean isDraftable() {
+    return draftable;
   }
 
   @Override

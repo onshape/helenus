@@ -32,6 +32,7 @@ public enum BeanColumnValueProvider implements ColumnValueProvider {
 
     Object value = null;
     try {
+      getter.setAccessible(true);
       value = getter.invoke(bean, new Object[] {});
     } catch (InvocationTargetException e) {
       if (e.getCause() != null) {

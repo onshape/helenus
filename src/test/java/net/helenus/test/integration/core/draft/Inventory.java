@@ -3,11 +3,13 @@ package net.helenus.test.integration.core.draft;
 import java.util.UUID;
 import net.helenus.core.AbstractAuditedEntityDraft;
 import net.helenus.core.Helenus;
+import net.helenus.core.reflect.Drafted;
+import net.helenus.core.reflect.Entity;
 import net.helenus.core.reflect.MapExportable;
 import net.helenus.mapping.annotation.*;
 
 @Table
-public interface Inventory {
+public interface Inventory extends Entity {
 
   static Inventory inventory = Helenus.dsl(Inventory.class);
 
@@ -36,7 +38,7 @@ public interface Inventory {
     return new Draft(this);
   }
 
-  class Draft extends AbstractAuditedEntityDraft<Inventory> {
+  class Draft extends AbstractAuditedEntityDraft<Inventory> implements Drafted<Inventory> {
 
     // Entity/Draft pattern-enabling methods:
     Draft(UUID id) {

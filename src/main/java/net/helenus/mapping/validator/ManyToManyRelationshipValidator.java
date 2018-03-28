@@ -13,14 +13,21 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.core;
+package net.helenus.mapping.validator;
 
-import net.helenus.support.HelenusException;
+import javax.validation.ConstraintValidatorContext;
+import net.helenus.mapping.annotation.Constraints;
 
-class UnitOfWorkImpl extends AbstractUnitOfWork<HelenusException> {
+public class ManyToManyRelationshipValidator extends RelationshipValidator<Constraints.ManyToMany> {
 
-  @SuppressWarnings("unchecked")
-  public UnitOfWorkImpl(HelenusSession session, UnitOfWork parent) {
-    super(session, (AbstractUnitOfWork<HelenusException>) parent);
+  @Override
+  public void initialize(Constraints.ManyToMany constraintAnnotation) {
+    super.initialize(constraintAnnotation);
+  }
+
+  @Override
+  public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+    // TODO(gburd): check that the list contains valid property names.
+    return true;
   }
 }

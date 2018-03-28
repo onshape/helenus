@@ -81,6 +81,10 @@ public final class Helenus {
     return new SessionInitializer(session);
   }
 
+  public static SessionInitializer init(Session session, String keyspace) {
+    return new SessionInitializer(session, keyspace);
+  }
+
   public static SessionInitializer init(Session session) {
 
     if (session == null) {

@@ -15,6 +15,9 @@
  */
 package net.helenus.core.reflect;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import java.io.InvalidObjectException;
 import java.io.ObjectInputStream;
 import java.io.ObjectStreamException;
@@ -24,10 +27,11 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import net.helenus.core.Getter;
 import net.helenus.core.Helenus;
+import net.helenus.core.cache.CacheUtil;
+import net.helenus.mapping.MappingUtil;
 import net.helenus.mapping.annotation.Transient;
 import net.helenus.mapping.value.ValueProviderMap;
 import net.helenus.support.HelenusException;
@@ -35,7 +39,8 @@ import net.helenus.support.HelenusException;
 public class MapperInvocationHandler<E> implements InvocationHandler, Serializable {
   private static final long serialVersionUID = -7044209982830584984L;
 
-  private final Map<String, Object> src;
+  private Map<String, Object> src;
+  private final Set<String> read = new HashSet<String>();
   private final Class<E> iface;
 
   public MapperInvocationHandler(Class<E> iface, Map<String, Object> src) {
@@ -95,13 +100,94 @@ public class MapperInvocationHandler<E> implements InvocationHandler, Serializab
           return true;
         }
       }
-      if (otherObj instanceof MapExportable && src.equals(((MapExportable) otherObj).toMap())) {
-        return true;
-      }
-      if (src instanceof MapExportable && otherObj.equals(((MapExportable) src).toMap())) {
-        return true;
+      if (otherObj instanceof MapExportable) {
+        return MappingUtil.compareMaps((MapExportable) otherObj, src);
       }
       return false;
+    }
+
+    if (MapExportable.PUT_METHOD.equals(methodName) && method.getParameterCount() == 2) {
+      final String key;
+      if (args[0] instanceof String) {
+        key = (String) args[0];
+      } else if (args[0] instanceof Getter) {
+        key = MappingUtil.resolveMappingProperty((Getter) args[0]).getProperty().getPropertyName();
+      } else {
+        key = null;
+      }
+      if (key != null) {
+        final Object value = (Object) args[1];
+        if (src instanceof ValueProviderMap) {
+          this.src = fromValueProviderMap(src);
+        }
+        src.put(key, value);
+      }
+      return null;
+    }
+
+    if (Entity.WRITTEN_AT_METHOD.equals(methodName) && method.getParameterCount() == 1) {
+      final String key;
+      if (args[0] instanceof String) {
+        key = CacheUtil.writeTimeKey((String) args[0]);
+      } else if (args[0] instanceof Getter) {
+        Getter getter = (Getter) args[0];
+        key =
+            CacheUtil.writeTimeKey(
+                MappingUtil.resolveMappingProperty(getter)
+                    .getProperty()
+                    .getColumnName()
+                    .toCql(false));
+      } else {
+        return 0L;
+      }
+      Long v = (Long) src.get(key);
+      if (v != null) {
+        return v;
+      }
+      return 0L;
+    }
+
+    if (Entity.TOKEN_OF_METHOD.equals(methodName) && method.getParameterCount() == 0) {
+        Long v = (Long) src.get("");
+        if (v != null) {
+            return v;
+        }
+        return 0L;
+    }
+
+    if (Entity.TTL_OF_METHOD.equals(methodName) && method.getParameterCount() == 1) {
+      final String key;
+      if (args[0] instanceof String) {
+        key = CacheUtil.ttlKey((String) args[0]);
+      } else if (args[0] instanceof Getter) {
+        Getter getter = (Getter) args[0];
+        key =
+            CacheUtil.ttlKey(
+                MappingUtil.resolveMappingProperty(getter)
+                    .getProperty()
+                    .getColumnName()
+                    .toCql(false));
+      } else {
+        return 0;
+      }
+      int v[] = (int[]) src.get(key);
+      if (v != null) {
+        return v[0];
+      }
+      return 0;
+    }
+
+    if (MapExportable.TO_MAP_METHOD.equals(methodName)) {
+      if (method.getParameterCount() == 1 && args[0] instanceof Boolean) {
+        if ((boolean) args[0] == true) {
+          return fromValueProviderMap(src, true);
+        }
+      }
+      return Collections.unmodifiableMap(src);
+    }
+
+    if (MapExportable.TO_READ_SET_METHOD.equals(methodName)) {
+      return read;
     }
 
     if (method.getParameterCount() != 0 || method.getReturnType() == void.class) {
@@ -128,26 +214,21 @@ public class MapperInvocationHandler<E> implements InvocationHandler, Serializab
       return Helenus.dsl(iface);
     }
 
-    if (MapExportable.TO_MAP_METHOD.equals(methodName)) {
-      return src; // Collections.unmodifiableMap(src);
-    }
-
-    Object value = src.get(methodName);
-
-    Class<?> returnType = method.getReturnType();
+    final Object value = src.get(methodName);
+    read.add(methodName);
 
     if (value == null) {
 
+      Class<?> returnType = method.getReturnType();
+
       // Default implementations of non-Transient methods in entities are the default
-      // value when the
-      // map contains 'null'.
+      // value when the map contains 'null'.
       if (method.isDefault()) {
         return invokeDefault(proxy, method, args);
       }
 
       // Otherwise, if the return type of the method is a primitive Java type then
-      // we'll return the standard
-      // default values to avoid a NPE in user code.
+      // we'll return the standard default values to avoid a NPE in user code.
       if (returnType.isPrimitive()) {
         DefaultPrimitiveTypes type = DefaultPrimitiveTypes.lookup(returnType);
         if (type == null) {
@@ -160,6 +241,35 @@ public class MapperInvocationHandler<E> implements InvocationHandler, Serializab
     return value;
   }
 
+  static Map<String, Object> fromValueProviderMap(Map v) {
+    return fromValueProviderMap(v, false);
+  }
+
+  static Map<String, Object> fromValueProviderMap(Map v, boolean mutable) {
+    if (v instanceof ValueProviderMap) {
+      Map<String, Object> m = new HashMap<String, Object>(v.size());
+      Set<String> keys = v.keySet();
+      for (String key : keys) {
+        Object value = v.get(key);
+        if (value != null && mutable) {
+          if (ImmutableList.class.isAssignableFrom(value.getClass())) {
+            m.put(key, new ArrayList((List) value));
+          } else if (ImmutableMap.class.isAssignableFrom(value.getClass())) {
+            m.put(key, new HashMap((Map) value));
+          } else if (ImmutableSet.class.isAssignableFrom(value.getClass())) {
+            m.put(key, new HashSet((Set) value));
+          } else {
+            m.put(key, value);
+          }
+        } else {
+          m.put(key, value);
+        }
+      }
+      return m;
+    }
+    return v;
+  }
+
   static class SerializationProxy<E> implements Serializable {
 
     private static final long serialVersionUID = -5617583940055969353L;
@@ -170,11 +280,7 @@ public class MapperInvocationHandler<E> implements InvocationHandler, Serializab
     public SerializationProxy(MapperInvocationHandler mapper) {
       this.iface = mapper.iface;
       if (mapper.src instanceof ValueProviderMap) {
-        this.src = new HashMap<String, Object>(mapper.src.size());
-        Set<String> keys = mapper.src.keySet();
-        for (String key : keys) {
-          this.src.put(key, mapper.src.get(key));
-        }
+        this.src = fromValueProviderMap(mapper.src);
       } else {
         this.src = mapper.src;
       }

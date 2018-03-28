@@ -28,6 +28,7 @@ import net.helenus.core.UnitOfWork;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.reflect.HelenusPropertyNode;
 import net.helenus.mapping.HelenusEntity;
+import net.helenus.support.HelenusException;
 import net.helenus.support.HelenusMappingException;
 
 public final class DeleteOperation extends AbstractFilterOperation<ResultSet, DeleteOperation> {
@@ -133,6 +134,10 @@ public final class DeleteOperation extends AbstractFilterOperation<ResultSet, De
     return bindFacetValues(getFacets());
   }
 
+  protected boolean isIdempotentOperation() {
+    return true;
+  }
+
   @Override
   public ResultSet sync() throws TimeoutException {
     ResultSet result = super.sync();
@@ -150,6 +155,16 @@ public final class DeleteOperation extends AbstractFilterOperation<ResultSet, De
     ResultSet result = super.sync(uow);
     uow.cacheEvict(bindFacetValues());
     return result;
+  }
+
+  public ResultSet batch(UnitOfWork uow) throws TimeoutException {
+    if (uow == null) {
+      throw new HelenusException("UnitOfWork cannot be null when batching operations.");
+    }
+
+    uow.cacheEvict(bindFacetValues());
+    uow.batch(this);
+    return null;
   }
 
   @Override

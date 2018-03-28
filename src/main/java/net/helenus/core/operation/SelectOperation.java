@@ -23,14 +23,15 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
 import com.datastax.driver.core.querybuilder.Select.Selection;
 import com.datastax.driver.core.querybuilder.Select.Where;
-import com.google.common.collect.Iterables;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import net.helenus.core.*;
+import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
+import net.helenus.core.reflect.Entity;
 import net.helenus.core.reflect.HelenusPropertyNode;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusProperty;
@@ -52,8 +53,10 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
   protected List<Ordering> ordering = null;
   protected Integer limit = null;
   protected boolean allowFiltering = false;
+
   protected String alternateTableName = null;
   protected boolean isCacheable = false;
+  protected boolean implementsEntityType = false;
 
   @SuppressWarnings("unchecked")
   public SelectOperation(AbstractSessionOperations sessionOperations) {
@@ -89,7 +92,8 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
         .map(p -> new HelenusPropertyNode(p, Optional.empty()))
         .forEach(p -> this.props.add(p));
 
-    isCacheable = entity.isCacheable();
+    this.isCacheable = entity.isCacheable();
+    this.implementsEntityType = Entity.class.isAssignableFrom(entity.getMappingInterface());
   }
 
   public SelectOperation(
@@ -106,7 +110,8 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
         .map(p -> new HelenusPropertyNode(p, Optional.empty()))
         .forEach(p -> this.props.add(p));
 
-    isCacheable = entity.isCacheable();
+    this.isCacheable = entity.isCacheable();
+    this.implementsEntityType = Entity.class.isAssignableFrom(entity.getMappingInterface());
   }
 
   public SelectOperation(
@@ -118,6 +123,10 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
 
     this.rowMapper = rowMapper;
     Collections.addAll(this.props, props);
+
+    HelenusEntity entity = props[0].getEntity();
+    this.isCacheable = entity.isCacheable();
+    this.implementsEntityType = Entity.class.isAssignableFrom(entity.getMappingInterface());
   }
 
   public CountOperation count() {
@@ -264,21 +273,17 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
                 + prop.getEntity().getMappingInterface());
       }
 
-      // TODO(gburd): writeTime and ttl will be useful on merge() but cause object
-      // identity to fail.
-      if (false && cached) {
+      if (cached && implementsEntityType) {
         switch (prop.getProperty().getColumnType()) {
           case PARTITION_KEY:
           case CLUSTERING_COLUMN:
             break;
           default:
             if (entity.equals(prop.getEntity())) {
-              if (prop.getNext().isPresent()) {
-                columnName = Iterables.getLast(prop).getColumnName().toCql(true);
-              }
               if (!prop.getProperty().getDataType().isCollectionType()) {
-                selection.writeTime(columnName).as(columnName + "_writeTime");
-                selection.ttl(columnName).as(columnName + "_ttl");
+                columnName = prop.getProperty().getColumnName().toCql(false);
+                selection.ttl(columnName).as('"' + CacheUtil.ttlKey(columnName) + '"');
+                selection.writeTime(columnName).as('"' + CacheUtil.writeTimeKey(columnName) + '"');
               }
             }
             break;
@@ -308,16 +313,23 @@ public final class SelectOperation<E> extends AbstractFilterStreamOperation<E, S
       boolean isFirstIndex = true;
       for (Filter<?> filter : filters.values()) {
         where.and(filter.getClause(sessionOps.getValuePreparer()));
-        HelenusProperty prop = filter.getNode().getProperty();
-        if (allowFiltering == false) {
+        HelenusProperty filterProp = filter.getNode().getProperty();
+        HelenusProperty prop =
+            props
+                .stream()
+                .map(HelenusPropertyNode::getProperty)
+                .filter(thisProp -> thisProp.getPropertyName().equals(filterProp.getPropertyName()))
+                .findFirst()
+                .orElse(null);
+        if (allowFiltering == false && prop != null) {
           switch (prop.getColumnType()) {
             case PARTITION_KEY:
-            case CLUSTERING_COLUMN:
               break;
+            case CLUSTERING_COLUMN:
             default:
               // When using non-Cassandra-standard 2i types or when using more than one
               // indexed column or non-indexed columns the query must include ALLOW FILTERING.
-              if (prop.caseSensitiveIndex()) {
+              if (prop.caseSensitiveIndex() == false) {
                 allowFiltering = true;
               } else if (prop.getIndexName() != null) {
                 allowFiltering |= !isFirstIndex;

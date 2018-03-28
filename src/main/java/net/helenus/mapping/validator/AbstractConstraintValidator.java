@@ -13,15 +13,22 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
-package net.helenus.core.reflect;
+package net.helenus.mapping.validator;
 
-import java.util.Set;
+import java.lang.annotation.Annotation;
+import javax.validation.ConstraintValidator;
+import javax.validation.ConstraintValidatorContext;
 
-public interface Drafted<T> extends MapExportable {
+public abstract class AbstractConstraintValidator<A extends Annotation, T>
+    implements ConstraintValidator<A, T> {
 
-  Set<String> mutated();
+  public A constraintAnnotation;
 
-  T build();
+  @Override
+  public void initialize(A constraintAnnotation) {
+    this.constraintAnnotation = constraintAnnotation;
+  }
 
-  Set<String> read();
+  @Override
+  public abstract boolean isValid(T value, ConstraintValidatorContext context);
 }

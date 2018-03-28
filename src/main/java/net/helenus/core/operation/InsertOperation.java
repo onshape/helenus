@@ -22,15 +22,17 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import java.util.*;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import net.helenus.core.AbstractSessionOperations;
 import net.helenus.core.Getter;
 import net.helenus.core.Helenus;
 import net.helenus.core.UnitOfWork;
+import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.UnboundFacet;
 import net.helenus.core.reflect.DefaultPrimitiveTypes;
-import net.helenus.core.reflect.Drafted;
 import net.helenus.core.reflect.HelenusPropertyNode;
+import net.helenus.core.reflect.MapExportable;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusProperty;
 import net.helenus.mapping.MappingUtil;
@@ -45,26 +47,44 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
       new ArrayList<Fun.Tuple2<HelenusPropertyNode, Object>>();
   private final T pojo;
   private final Class<?> resultType;
+  private final Set<String> readSet;
   private HelenusEntity entity;
   private boolean ifNotExists;
 
   private int[] ttl;
   private long[] timestamp;
+  private long writeTime = 0L;
 
   public InsertOperation(AbstractSessionOperations sessionOperations, boolean ifNotExists) {
     super(sessionOperations);
 
-    this.ifNotExists = ifNotExists;
     this.pojo = null;
+    this.readSet = null;
+    this.ifNotExists = ifNotExists;
     this.resultType = ResultSet.class;
+  }
+
+  public InsertOperation(
+      AbstractSessionOperations sessionOperations,
+      HelenusEntity entity,
+      Class<?> resultType,
+      boolean ifNotExists) {
+    super(sessionOperations);
+
+    this.pojo = null;
+    this.readSet = null;
+    this.ifNotExists = ifNotExists;
+    this.resultType = resultType;
+    this.entity = entity;
   }
 
   public InsertOperation(
       AbstractSessionOperations sessionOperations, Class<?> resultType, boolean ifNotExists) {
     super(sessionOperations);
 
-    this.ifNotExists = ifNotExists;
     this.pojo = null;
+    this.readSet = null;
+    this.ifNotExists = ifNotExists;
     this.resultType = resultType;
   }
 
@@ -73,11 +93,13 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
       HelenusEntity entity,
       T pojo,
       Set<String> mutations,
+      Set<String> read,
       boolean ifNotExists) {
     super(sessionOperations);
 
-    this.entity = entity;
     this.pojo = pojo;
+    this.readSet = read;
+    this.entity = entity;
     this.ifNotExists = ifNotExists;
     this.resultType = entity.getMappingInterface();
 
@@ -136,8 +158,32 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
 
   @Override
   public BuiltStatement buildStatement(boolean cached) {
-
-    values.forEach(t -> addPropertyNode(t._1));
+    List<HelenusEntity> entities =
+        values
+            .stream()
+            .map(t -> t._1.getProperty().getEntity())
+            .distinct()
+            .collect(Collectors.toList());
+    if (entities.size() != 1) {
+      throw new HelenusMappingException(
+          "you can insert only single entity at a time, found: "
+              + entities
+                  .stream()
+                  .map(e -> e.getMappingInterface().toString())
+                  .collect(Collectors.joining(", ")));
+    }
+    HelenusEntity entity = entities.get(0);
+    if (this.entity != null) {
+      if (this.entity != entity) {
+        throw new HelenusMappingException(
+            "you can insert only single entity at a time, found: "
+                + this.entity.getMappingInterface().toString()
+                + ", "
+                + entity.getMappingInterface().toString());
+      }
+    } else {
+      this.entity = entity;
+    }
 
     if (values.isEmpty()) return null;
 
@@ -156,6 +202,8 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
           insert.value(t._1.getColumnName(), t._2);
         });
 
+    //TODO(gburd): IF NOT EXISTS when @Constraints.Relationship is 1:1 or 1:m
+
     if (this.ttl != null) {
       insert.using(QueryBuilder.ttl(this.ttl[0]));
     }
@@ -166,6 +214,52 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
     return insert;
   }
 
+  private T newInstance(Class<?> iface) {
+    if (values.size() > 0) {
+      boolean immutable = entity.isDraftable();
+      Collection<HelenusProperty> properties = entity.getOrderedProperties();
+      Map<String, Object> backingMap = new HashMap<String, Object>(properties.size());
+
+      // First, add all the inserted values into our new map.
+      values.forEach(t -> backingMap.put(t._1.getProperty().getPropertyName(), t._2));
+
+      // Then, fill in all the rest of the properties.
+      for (HelenusProperty prop : properties) {
+        String key = prop.getPropertyName();
+        if (backingMap.containsKey(key)) {
+          // Some values man need to be converted (e.g. from String to Enum). This is done
+          // within the BeanColumnValueProvider below.
+          Optional<Function<Object, Object>> converter =
+              prop.getReadConverter(sessionOps.getSessionRepository());
+          if (converter.isPresent()) {
+            backingMap.put(key, converter.get().apply(backingMap.get(key)));
+          }
+        } else {
+          // If we started this operation with an instance of this type, use values from
+          // that.
+          if (pojo != null) {
+            backingMap.put(
+                key, BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop, immutable));
+          } else {
+            // Otherwise we'll use default values for the property type if available.
+            Class<?> propType = prop.getJavaType();
+            if (propType.isPrimitive()) {
+              DefaultPrimitiveTypes type = DefaultPrimitiveTypes.lookup(propType);
+              if (type == null) {
+                throw new HelenusException("unknown primitive type " + propType);
+              }
+              backingMap.put(key, type.getDefaultValue());
+            }
+          }
+        }
+      }
+
+      // Lastly, create a new proxy object for the entity and return the new instance.
+      return (T) Helenus.map(iface, backingMap);
+    }
+    return null;
+  }
+
   @Override
   public T transform(ResultSet resultSet) {
     if ((ifNotExists == true) && (resultSet.wasApplied() == false)) {
@@ -174,50 +268,12 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
 
     Class<?> iface = entity.getMappingInterface();
     if (resultType == iface) {
-      if (values.size() > 0) {
-        boolean immutable = iface.isAssignableFrom(Drafted.class);
-        Collection<HelenusProperty> properties = entity.getOrderedProperties();
-        Map<String, Object> backingMap = new HashMap<String, Object>(properties.size());
-
-        // First, add all the inserted values into our new map.
-        values.forEach(t -> backingMap.put(t._1.getProperty().getPropertyName(), t._2));
-
-        // Then, fill in all the rest of the properties.
-        for (HelenusProperty prop : properties) {
-          String key = prop.getPropertyName();
-          if (backingMap.containsKey(key)) {
-            // Some values man need to be converted (e.g. from String to Enum). This is done
-            // within the BeanColumnValueProvider below.
-            Optional<Function<Object, Object>> converter =
-                prop.getReadConverter(sessionOps.getSessionRepository());
-            if (converter.isPresent()) {
-              backingMap.put(key, converter.get().apply(backingMap.get(key)));
-            }
-          } else {
-            // If we started this operation with an instance of this type, use values from
-            // that.
-            if (pojo != null) {
-              backingMap.put(
-                  key, BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop, immutable));
-            } else {
-              // Otherwise we'll use default values for the property type if available.
-              Class<?> propType = prop.getJavaType();
-              if (propType.isPrimitive()) {
-                DefaultPrimitiveTypes type = DefaultPrimitiveTypes.lookup(propType);
-                if (type == null) {
-                  throw new HelenusException("unknown primitive type " + propType);
-                }
-                backingMap.put(key, type.getDefaultValue());
-              }
-            }
-          }
-        }
-
-        // Lastly, create a new proxy object for the entity and return the new instance.
-        return (T) Helenus.map(iface, backingMap);
+      T o = newInstance(iface);
+      if (o == null) {
+        // Oddly, this insert didn't change anything so simply return the pojo.
+        return (T) pojo;
       }
-      // Oddly, this insert didn't change anything so simply return the pojo.
-      return (T) pojo;
+      return o;
     }
     return (T) resultSet;
   }
@@ -234,23 +290,48 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
     return this;
   }
 
-  private void addPropertyNode(HelenusPropertyNode p) {
-    if (entity == null) {
-      entity = p.getEntity();
-    } else if (entity != p.getEntity()) {
-      throw new HelenusMappingException(
-          "you can insert only single entity "
-              + entity.getMappingInterface()
-              + " or "
-              + p.getEntity().getMappingInterface());
+  protected void adjustTtlAndWriteTime(MapExportable pojo) {
+    if (ttl != null || writeTime != 0L) {
+      List<String> columnNames =
+          values
+              .stream()
+              .map(t -> t._1.getProperty())
+              .filter(
+                  prop -> {
+                    switch (prop.getColumnType()) {
+                      case PARTITION_KEY:
+                      case CLUSTERING_COLUMN:
+                        return false;
+                      default:
+                        return true;
+                    }
+                  })
+              .map(prop -> prop.getColumnName().toCql(false))
+              .collect(Collectors.toList());
+
+      if (columnNames.size() > 0) {
+        if (ttl != null) {
+          columnNames.forEach(name -> pojo.put(CacheUtil.ttlKey(name), ttl));
+        }
+        if (writeTime != 0L) {
+          columnNames.forEach(name -> pojo.put(CacheUtil.writeTimeKey(name), writeTime));
+        }
+      }
     }
+  }
+
+  @Override
+  protected boolean isIdempotentOperation() {
+    return values.stream().map(v -> v._1.getProperty()).allMatch(prop -> prop.isIdempotent())
+        || super.isIdempotentOperation();
   }
 
   @Override
   public T sync() throws TimeoutException {
     T result = super.sync();
     if (entity.isCacheable() && result != null) {
-      sessionOps.updateCache(result, entity.getFacets());
+      adjustTtlAndWriteTime((MapExportable) result);
+      sessionOps.updateCache(result, bindFacetValues());
     }
     return result;
   }
@@ -272,13 +353,33 @@ public final class InsertOperation<T> extends AbstractOperation<T, InsertOperati
     }
     Class<?> iface = entity.getMappingInterface();
     if (resultType == iface) {
-      cacheUpdate(uow, result, entity.getFacets());
-    } else {
-      if (entity.isCacheable()) {
-        sessionOps.cacheEvict(bindFacetValues());
+      if (entity != null && MapExportable.class.isAssignableFrom(entity.getMappingInterface())) {
+        adjustTtlAndWriteTime((MapExportable) result);
       }
+      cacheUpdate(uow, result, bindFacetValues());
     }
     return result;
+  }
+
+  public T batch(UnitOfWork uow) throws TimeoutException {
+    if (uow == null) {
+      throw new HelenusException("UnitOfWork cannot be null when batching operations.");
+    }
+
+    if (this.entity != null) {
+      Class<?> iface = this.entity.getMappingInterface();
+      if (resultType == iface) {
+        final T result = (pojo == null) ? newInstance(iface) : pojo;
+        if (result != null) {
+          adjustTtlAndWriteTime((MapExportable) result);
+          cacheUpdate(uow, result, bindFacetValues());
+        }
+        uow.batch(this);
+        return (T) result;
+      }
+    }
+
+    return sync(uow);
   }
 
   @Override

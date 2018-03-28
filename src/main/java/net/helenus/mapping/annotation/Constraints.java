@@ -228,10 +228,107 @@ public final class Constraints {
   public @interface Distinct {
 
     /**
-     * User defined Enum to further restrict the items in the set.
+     * User defined list of properties that combine with this one to result in a distinct
+     * combination in the table.
      *
      * @return Java
      */
-    Class<? extends Enum> value() default Enum.class;
+    String[] value() default "";
+
+    boolean alone() default true;
+
+    boolean combined() default true;
+  }
+
+  /**
+   * Distinct annotation is used to signal, but not ensure that a value should be distinct in the
+   * database.
+   *
+   * <p>Can be used only for @java.lang.CharSequence
+   *
+   * <p>It does not have effect on selects and data retrieval operations
+   */
+  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(value = {ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+  @Constraint(validatedBy = OneToOneRelationshipValidator.class)
+  public @interface OneToOne {
+
+    /**
+     * User defined list of properties that combine with this one to result in a distinct
+     * combination in the table.
+     *
+     * @return Java
+     */
+    String[] value() default "";
+  }
+
+  /**
+   * Distinct annotation is used to signal, but not ensure that a value should be distinct in the
+   * database.
+   *
+   * <p>Can be used only for @java.lang.CharSequence
+   *
+   * <p>It does not have effect on selects and data retrieval operations
+   */
+  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(value = {ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+  @Constraint(validatedBy = OneToManyRelationshipValidator.class)
+  public @interface OneToMany {
+
+    /**
+     * User defined list of properties that combine with this one to result in a distinct
+     * combination in the table.
+     *
+     * @return Java
+     */
+    String[] value() default "";
+  }
+
+  /**
+   * Distinct annotation is used to signal, but not ensure that a value should be distinct in the
+   * database.
+   *
+   * <p>Can be used only for @java.lang.CharSequence
+   *
+   * <p>It does not have effect on selects and data retrieval operations
+   */
+  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(value = {ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+  @Constraint(validatedBy = ManyToOneRelationshipValidator.class)
+  public @interface ManyToOne {
+
+    /**
+     * User defined list of properties that combine with this one to result in a distinct
+     * combination in the table.
+     *
+     * @return Java
+     */
+    String[] value() default "";
+  }
+
+  /**
+   * Distinct annotation is used to signal, but not ensure that a value should be distinct in the
+   * database.
+   *
+   * <p>Can be used only for @java.lang.CharSequence
+   *
+   * <p>It does not have effect on selects and data retrieval operations
+   */
+  @Documented
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(value = {ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+  @Constraint(validatedBy = ManyToManyRelationshipValidator.class)
+  public @interface ManyToMany {
+
+    /**
+     * User defined list of properties that combine with this one to result in a distinct
+     * combination in the table.
+     *
+     * @return Java
+     */
+    String[] value() default "";
   }
 }

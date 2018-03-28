@@ -15,8 +15,6 @@
  */
 package net.helenus.core.operation;
 
-import brave.Tracer;
-import brave.propagation.TraceContext;
 import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.RegularStatement;
@@ -43,19 +41,14 @@ import net.helenus.support.HelenusException;
 
 public abstract class AbstractStatementOperation<E, O extends AbstractStatementOperation<E, O>>
     extends Operation<E> {
-
-  protected boolean checkCache = true;
-  protected boolean showValues = true;
-  protected TraceContext traceContext;
-  long queryExecutionTimeout = 10;
-  TimeUnit queryTimeoutUnits = TimeUnit.SECONDS;
+  private boolean ignoreCache = false;
   private ConsistencyLevel consistencyLevel;
   private ConsistencyLevel serialConsistencyLevel;
   private RetryPolicy retryPolicy;
-  private boolean idempotent = false;
   private boolean enableTracing = false;
   private long[] defaultTimestamp = null;
   private int[] fetchSize = null;
+  protected boolean idempotent = false;
 
   public AbstractStatementOperation(AbstractSessionOperations sessionOperations) {
     super(sessionOperations);
@@ -66,12 +59,12 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
   public abstract Statement buildStatement(boolean cached);
 
   public O uncached(boolean enabled) {
-    checkCache = enabled;
+    ignoreCache = !enabled;
     return (O) this;
   }
 
   public O uncached() {
-    checkCache = false;
+    ignoreCache = true;
     return (O) this;
   }
 
@@ -252,22 +245,16 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
       statement.setFetchSize(fetchSize[0]);
     }
 
-    if (idempotent) {
+    if (isIdempotentOperation()) {
       statement.setIdempotent(true);
     }
 
     return statement;
   }
 
-  public O zipkinContext(TraceContext traceContext) {
-    if (traceContext != null) {
-      Tracer tracer = this.sessionOps.getZipkinTracer();
-      if (tracer != null) {
-        this.traceContext = traceContext;
-      }
-    }
-
-    return (O) this;
+  @Override
+  protected boolean isIdempotentOperation() {
+    return idempotent;
   }
 
   public Statement statement() {
@@ -313,7 +300,11 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     throw new HelenusException("only RegularStatements can be prepared");
   }
 
-  protected E checkCache(UnitOfWork<?> uow, List<Facet> facets) {
+  protected boolean ignoreCache() {
+    return ignoreCache;
+  }
+
+  protected E checkCache(UnitOfWork uow, List<Facet> facets) {
     E result = null;
     Optional<Object> optionalCachedResult = Optional.empty();
 
@@ -327,7 +318,7 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     return result;
   }
 
-  protected void cacheUpdate(UnitOfWork<?> uow, E pojo, List<Facet> identifyingFacets) {
+  protected Object cacheUpdate(UnitOfWork uow, E pojo, List<Facet> identifyingFacets) {
     List<Facet> facets = new ArrayList<>();
     Map<String, Object> valueMap =
         pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
@@ -359,6 +350,6 @@ public abstract class AbstractStatementOperation<E, O extends AbstractStatementO
     }
 
     // Cache the value (pojo), the statement key, and the fully bound facets.
-    uow.cacheUpdate(pojo, facets);
+    return uow.cacheUpdate(pojo, facets);
   }
 }

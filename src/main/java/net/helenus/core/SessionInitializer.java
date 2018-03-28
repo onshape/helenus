@@ -15,7 +15,6 @@
  */
 package net.helenus.core;
 
-import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -25,7 +24,7 @@ import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
-import net.helenus.core.cache.SessionCache;
+import javax.cache.CacheManager;
 import net.helenus.core.reflect.DslExportable;
 import net.helenus.mapping.HelenusEntity;
 import net.helenus.mapping.HelenusEntityType;
@@ -43,19 +42,26 @@ public final class SessionInitializer extends AbstractSessionOperations {
   private CodecRegistry registry;
   private String usingKeyspace;
   private boolean showCql = false;
+  private boolean showValues = true;
   private ConsistencyLevel consistencyLevel;
-  private boolean idempotent = true;
+  private boolean idempotent = false;
   private MetricRegistry metricRegistry = new MetricRegistry();
-  private Tracer zipkinTracer;
   private PrintStream printStream = System.out;
   private Executor executor = MoreExecutors.directExecutor();
-  private Class<? extends UnitOfWork> unitOfWorkClass = UnitOfWorkImpl.class;
   private SessionRepositoryBuilder sessionRepository;
   private boolean dropUnusedColumns = false;
   private boolean dropUnusedIndexes = false;
   private KeyspaceMetadata keyspaceMetadata;
   private AutoDdl autoDdl = AutoDdl.UPDATE;
-  private SessionCache sessionCache = null;
+  private CacheManager cacheManager = null;
+
+  SessionInitializer(Session session, String keyspace) {
+    this.session = session;
+    this.usingKeyspace = keyspace;
+    if (session != null) {
+      this.sessionRepository = new SessionRepositoryBuilder(session);
+    }
+  }
 
   SessionInitializer(Session session) {
     this.session = Objects.requireNonNull(session, "empty session");
@@ -103,18 +109,22 @@ public final class SessionInitializer extends AbstractSessionOperations {
     return this;
   }
 
+  public SessionInitializer showQueryValuesInLog(boolean showValues) {
+    this.showValues = showValues;
+    return this;
+  }
+
+  public SessionInitializer showQueryValuesInLog() {
+    this.showValues = true;
+    return this;
+  }
+
+  public boolean showValues() {
+    return showValues;
+  }
+
   public SessionInitializer metricRegistry(MetricRegistry metricRegistry) {
     this.metricRegistry = metricRegistry;
-    return this;
-  }
-
-  public SessionInitializer zipkinTracer(Tracer tracer) {
-    this.zipkinTracer = tracer;
-    return this;
-  }
-
-  public SessionInitializer setUnitOfWorkClass(Class<? extends UnitOfWork> e) {
-    this.unitOfWorkClass = e;
     return this;
   }
 
@@ -123,13 +133,18 @@ public final class SessionInitializer extends AbstractSessionOperations {
     return this;
   }
 
-  public SessionInitializer setSessionCache(SessionCache sessionCache) {
-    this.sessionCache = sessionCache;
+  public SessionInitializer setCacheManager(CacheManager cacheManager) {
+    this.cacheManager = cacheManager;
     return this;
   }
 
   public ConsistencyLevel getDefaultConsistencyLevel() {
     return consistencyLevel;
+  }
+
+  public SessionInitializer setOperationsIdempotentByDefault() {
+    this.idempotent = true;
+    return this;
   }
 
   public SessionInitializer idempotentQueryExecution(boolean idempotent) {
@@ -233,8 +248,10 @@ public final class SessionInitializer extends AbstractSessionOperations {
   }
 
   public SessionInitializer use(String keyspace) {
-    session.execute(SchemaUtil.use(keyspace, false));
-    this.usingKeyspace = keyspace;
+    if (session != null) {
+      session.execute(SchemaUtil.use(keyspace, false));
+      this.usingKeyspace = keyspace;
+    }
     return this;
   }
 
@@ -255,16 +272,15 @@ public final class SessionInitializer extends AbstractSessionOperations {
         usingKeyspace,
         registry,
         showCql,
+        showValues,
         printStream,
         sessionRepository,
         executor,
         autoDdl == AutoDdl.CREATE_DROP,
         consistencyLevel,
         idempotent,
-        unitOfWorkClass,
-        sessionCache,
-        metricRegistry,
-        zipkinTracer);
+        cacheManager,
+        metricRegistry);
   }
 
   private void initialize() {
@@ -281,9 +297,15 @@ public final class SessionInitializer extends AbstractSessionOperations {
           }
 
           DslExportable dsl = (DslExportable) Helenus.dsl(iface);
-          dsl.setCassandraMetadataForHelenusSession(session.getCluster().getMetadata());
-          sessionRepository.add(dsl);
+          if (session != null) {
+            dsl.setCassandraMetadataForHelenusSession(session.getCluster().getMetadata());
+          }
+          if (sessionRepository != null) {
+            sessionRepository.add(dsl);
+          }
         });
+
+    if (session == null) return;
 
     TableOperations tableOps = new TableOperations(this, dropUnusedColumns, dropUnusedIndexes);
     UserTypeOperations userTypeOps = new UserTypeOperations(this, dropUnusedColumns);

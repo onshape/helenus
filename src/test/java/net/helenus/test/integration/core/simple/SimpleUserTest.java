@@ -17,13 +17,11 @@ package net.helenus.test.integration.core.simple;
 
 import static net.helenus.core.Query.eq;
 
-import com.datastax.driver.core.ResultSet;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import net.helenus.core.Helenus;
 import net.helenus.core.HelenusSession;
 import net.helenus.core.Operator;
-import net.helenus.core.operation.UpdateOperation;
 import net.helenus.support.Fun;
 import net.helenus.test.integration.build.AbstractEmbeddedCassandraTest;
 import org.junit.Assert;
@@ -184,7 +182,6 @@ public class SimpleUserTest extends AbstractEmbeddedCassandraTest {
         .set(user::age, null)
         .set(user::type, null)
         .where(user::id, eq(100L))
-        .zipkinContext(null)
         .sync();
 
     Fun.Tuple3<String, Integer, UserType> tuple =
@@ -207,18 +204,14 @@ public class SimpleUserTest extends AbstractEmbeddedCassandraTest {
     Assert.assertEquals(0L, cnt);
   }
 
-  public void testZipkin() throws TimeoutException {
-    session
-        .update()
-        .set(user::name, null)
-        .set(user::age, null)
-        .set(user::type, null)
-        .where(user::id, eq(100L))
-        .zipkinContext(null)
-        .sync();
-
-    UpdateOperation<ResultSet> update = session.update();
-    update.set(user::name, null).zipkinContext(null).sync();
+  public void testFunTuple() throws TimeoutException {
+    Fun.Tuple1<String> tf =
+        session.select(user::name).where(user::id, eq(100L)).single().sync().orElse(null);
+    if (tf != null) {
+      Assert.assertEquals(Fun.class, tf.getClass().getEnclosingClass());
+      String name = tf._1;
+      Assert.assertEquals("greg", name);
+    }
   }
 
   private void assertUsers(User expected, User actual) {

@@ -42,7 +42,7 @@ public abstract class AbstractFilterStreamOperation<
 
   public <V> O where(Getter<V> getter, Operator operator, V val) {
 
-    addFilter(Filter.create(getter, operator, val));
+    if (val != null) addFilter(Filter.create(getter, operator, val));
 
     return (O) this;
   }
@@ -63,7 +63,7 @@ public abstract class AbstractFilterStreamOperation<
 
   public <V> O and(Getter<V> getter, Operator operator, V val) {
 
-    addFilter(Filter.create(getter, operator, val));
+    if (val != null) addFilter(Filter.create(getter, operator, val));
 
     return (O) this;
   }
@@ -84,7 +84,7 @@ public abstract class AbstractFilterStreamOperation<
 
   public <V> O onlyIf(Getter<V> getter, Operator operator, V val) {
 
-    addIfFilter(Filter.create(getter, operator, val));
+    if (val != null) addIfFilter(Filter.create(getter, operator, val));
 
     return (O) this;
   }

@@ -13,31 +13,23 @@
  *   See the License for the specific language governing permissions and
  *   limitations under the License.
  */
+package net.helenus.mapping.validator;
 
-package net.helenus.core.cache;
+import java.lang.annotation.Annotation;
+import javax.validation.ConstraintValidator;
+import javax.validation.ConstraintValidatorContext;
 
-import com.google.common.cache.Cache;
+public abstract class RelationshipValidator<A extends Annotation>
+    extends AbstractConstraintValidator<A, CharSequence>
+    implements ConstraintValidator<A, CharSequence> {
 
-public class GuavaCache<K, V> implements SessionCache<K, V> {
-
-  final Cache<K, V> cache;
-
-  GuavaCache(Cache<K, V> cache) {
-    this.cache = cache;
+  @Override
+  public void initialize(A constraintAnnotation) {
+    super.initialize(constraintAnnotation);
   }
 
   @Override
-  public void invalidate(K key) {
-    cache.invalidate(key);
-  }
-
-  @Override
-  public V get(K key) {
-    return cache.getIfPresent(key);
-  }
-
-  @Override
-  public void put(K key, V value) {
-    cache.put(key, value);
+  public boolean isValid(CharSequence value, ConstraintValidatorContext context) {
+    return false;
   }
 }

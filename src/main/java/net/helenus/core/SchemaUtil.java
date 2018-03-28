@@ -165,6 +165,14 @@ public final class SchemaUtil {
       }
     }
 
+    if (p.size() == 0 && c.size() == 0)
+      return "{"
+          + properties
+              .stream()
+              .map(HelenusProperty::getPropertyName)
+              .collect(Collectors.joining(", "))
+          + "}";
+
     return "("
         + ((p.size() > 1) ? "(" + String.join(", ", p) + ")" : p.get(0))
         + ((c.size() > 0)
@@ -329,7 +337,7 @@ public final class SchemaUtil {
 
   public static SchemaStatement createIndex(HelenusProperty prop) {
     if (prop.caseSensitiveIndex()) {
-      return SchemaBuilder.createIndex(prop.getIndexName().get().toCql())
+      return SchemaBuilder.createIndex(indexName(prop))
           .ifNotExists()
           .onTable(prop.getEntity().getName().toCql())
           .andColumn(prop.getColumnName().toCql());
@@ -398,7 +406,7 @@ public final class SchemaUtil {
   }
 
   public static SchemaStatement dropIndex(HelenusProperty prop) {
-    return SchemaBuilder.dropIndex(prop.getIndexName().get().toCql()).ifExists();
+    return SchemaBuilder.dropIndex(indexName(prop)).ifExists();
   }
 
   private static SchemaBuilder.Direction mapDirection(OrderingDirection o) {
@@ -457,4 +465,9 @@ public final class SchemaUtil {
     }
     return null;
   }
+
+  private static String indexName(HelenusProperty prop) {
+      return prop.getEntity().getName().toCql() + "_" + prop.getIndexName().get().toCql();
+  }
+
 }

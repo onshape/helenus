@@ -17,23 +17,19 @@ package net.helenus.core;
 
 import static net.helenus.core.Query.eq;
 
-import brave.Tracer;
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.*;
 import com.google.common.collect.Table;
 import java.io.Closeable;
 import java.io.PrintStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javax.cache.Cache;
+import javax.cache.CacheManager;
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
-import net.helenus.core.cache.SessionCache;
 import net.helenus.core.cache.UnboundFacet;
 import net.helenus.core.operation.*;
 import net.helenus.core.reflect.Drafted;
@@ -47,74 +43,69 @@ import net.helenus.support.*;
 import net.helenus.support.Fun.Tuple1;
 import net.helenus.support.Fun.Tuple2;
 import net.helenus.support.Fun.Tuple6;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class HelenusSession extends AbstractSessionOperations implements Closeable {
-
   public static final Object deleted = new Object();
-  private static final Logger LOG = LoggerFactory.getLogger(HelenusSession.class);
-  private static final Pattern classNameRegex =
-      Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
   private final Session session;
   private final CodecRegistry registry;
   private final ConsistencyLevel defaultConsistencyLevel;
   private final boolean defaultQueryIdempotency;
   private final MetricRegistry metricRegistry;
-  private final Tracer zipkinTracer;
   private final PrintStream printStream;
-  private final Class<? extends UnitOfWork> unitOfWorkClass;
   private final SessionRepository sessionRepository;
   private final Executor executor;
   private final boolean dropSchemaOnClose;
-  private final SessionCache<String, Object> sessionCache;
+  private final CacheManager cacheManager;
   private final RowColumnValueProvider valueProvider;
   private final StatementColumnValuePreparer valuePreparer;
   private final Metadata metadata;
   private volatile String usingKeyspace;
   private volatile boolean showCql;
+  private volatile boolean showValues;
 
   HelenusSession(
       Session session,
       String usingKeyspace,
       CodecRegistry registry,
       boolean showCql,
+      boolean showValues,
       PrintStream printStream,
       SessionRepositoryBuilder sessionRepositoryBuilder,
       Executor executor,
       boolean dropSchemaOnClose,
       ConsistencyLevel consistencyLevel,
       boolean defaultQueryIdempotency,
-      Class<? extends UnitOfWork> unitOfWorkClass,
-      SessionCache sessionCache,
-      MetricRegistry metricRegistry,
-      Tracer tracer) {
+      CacheManager cacheManager,
+      MetricRegistry metricRegistry) {
     this.session = session;
     this.registry = registry == null ? CodecRegistry.DEFAULT_INSTANCE : registry;
     this.usingKeyspace =
         Objects.requireNonNull(
             usingKeyspace, "keyspace needs to be selected before creating session");
     this.showCql = showCql;
+    this.showValues = showValues;
     this.printStream = printStream;
-    this.sessionRepository = sessionRepositoryBuilder.build();
+    this.sessionRepository =
+        sessionRepositoryBuilder == null ? null : sessionRepositoryBuilder.build();
     this.executor = executor;
     this.dropSchemaOnClose = dropSchemaOnClose;
     this.defaultConsistencyLevel = consistencyLevel;
     this.defaultQueryIdempotency = defaultQueryIdempotency;
-    this.unitOfWorkClass = unitOfWorkClass;
     this.metricRegistry = metricRegistry;
-    this.zipkinTracer = tracer;
-
-    if (sessionCache == null) {
-      this.sessionCache = SessionCache.<String, Object>defaultCache();
-    } else {
-      this.sessionCache = sessionCache;
-    }
+    this.cacheManager = cacheManager;
 
     this.valueProvider = new RowColumnValueProvider(this.sessionRepository);
     this.valuePreparer = new StatementColumnValuePreparer(this.sessionRepository);
-    this.metadata = session.getCluster().getMetadata();
+    this.metadata = session == null ? null : session.getCluster().getMetadata();
+  }
+
+  public UnitOfWork begin() {
+    return new UnitOfWork(this).begin();
+  }
+
+  public UnitOfWork begin(UnitOfWork parent) {
+    return new UnitOfWork(this, parent).begin();
   }
 
   @Override
@@ -153,6 +144,20 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     return this;
   }
 
+  public HelenusSession showQueryValuesInLog(boolean showValues) {
+    this.showValues = showValues;
+    return this;
+  }
+
+  public HelenusSession showQueryValuesInLog() {
+    this.showValues = true;
+    return this;
+  }
+
+  public boolean showValues() {
+    return showValues;
+  }
+
   @Override
   public Executor getExecutor() {
     return executor;
@@ -174,11 +179,6 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   }
 
   @Override
-  public Tracer getZipkinTracer() {
-    return zipkinTracer;
-  }
-
-  @Override
   public MetricRegistry getMetricRegistry() {
     return metricRegistry;
   }
@@ -195,13 +195,16 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public Object checkCache(String tableName, List<Facet> facets) {
-    List<String[]> facetCombinations = CacheUtil.flattenFacets(facets);
     Object result = null;
-    for (String[] combination : facetCombinations) {
-      String cacheKey = tableName + "." + Arrays.toString(combination);
-      result = sessionCache.get(cacheKey);
-      if (result != null) {
-        return result;
+    if (cacheManager != null) {
+      Cache<String, Object> cache = cacheManager.getCache(tableName);
+      if (cache != null) {
+        for (String key : CacheUtil.flatKeys(tableName, facets)) {
+          result = cache.get(key);
+          if (result != null) {
+            return result;
+          }
+        }
       }
     }
     return null;
@@ -209,11 +212,12 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public void cacheEvict(List<Facet> facets) {
-    String tableName = CacheUtil.schemaName(facets);
-    List<String[]> facetCombinations = CacheUtil.flattenFacets(facets);
-    for (String[] combination : facetCombinations) {
-      String cacheKey = tableName + "." + Arrays.toString(combination);
-      sessionCache.invalidate(cacheKey);
+    if (cacheManager != null) {
+      String tableName = CacheUtil.schemaName(facets);
+      Cache<String, Object> cache = cacheManager.getCache(tableName);
+      if (cache != null) {
+        CacheUtil.flatKeys(tableName, facets).forEach(key -> cache.remove(key));
+      }
     }
   }
 
@@ -235,7 +239,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
             }
           } else {
             value = valueMap.get(prop.getPropertyName());
-            binder.setValueForProperty(prop, value.toString());
+            if (value != null) binder.setValueForProperty(prop, value.toString());
           }
         }
         if (binder.isBound()) {
@@ -252,142 +256,94 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
   @Override
   public void mergeCache(Table<String, String, Either<Object, List<Facet>>> uowCache) {
-    List<Object> items =
-        uowCache
-            .values()
-            .stream()
-            .filter(Either::isLeft)
-            .map(Either::getLeft)
-            .distinct()
-            .collect(Collectors.toList());
-    for (Object pojo : items) {
-      HelenusEntity entity = Helenus.resolve(MappingUtil.getMappingInterface(pojo));
-      Map<String, Object> valueMap =
-          pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
-      if (entity.isCacheable()) {
-        List<Facet> boundFacets = new ArrayList<>();
-        for (Facet facet : entity.getFacets()) {
-          if (facet instanceof UnboundFacet) {
-            UnboundFacet unboundFacet = (UnboundFacet) facet;
-            UnboundFacet.Binder binder = unboundFacet.binder();
-            unboundFacet
-                .getProperties()
-                .forEach(
-                    prop -> {
-                      if (valueMap == null) {
-                        Object value =
-                            BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop);
-                        binder.setValueForProperty(prop, value.toString());
-                      } else {
-                        binder.setValueForProperty(
-                            prop, valueMap.get(prop.getPropertyName()).toString());
-                      }
-                    });
-            if (binder.isBound()) {
-              boundFacets.add(binder.bind());
+    if (cacheManager != null) {
+      List<Object> items =
+          uowCache
+              .values()
+              .stream()
+              .filter(Either::isLeft)
+              .map(Either::getLeft)
+              .distinct()
+              .collect(Collectors.toList());
+      for (Object pojo : items) {
+        HelenusEntity entity = Helenus.resolve(MappingUtil.getMappingInterface(pojo));
+        Map<String, Object> valueMap =
+            pojo instanceof MapExportable ? ((MapExportable) pojo).toMap() : null;
+        if (entity.isCacheable()) {
+          List<Facet> boundFacets = new ArrayList<>();
+          for (Facet facet : entity.getFacets()) {
+            if (facet instanceof UnboundFacet) {
+              UnboundFacet unboundFacet = (UnboundFacet) facet;
+              UnboundFacet.Binder binder = unboundFacet.binder();
+              unboundFacet
+                  .getProperties()
+                  .forEach(
+                      prop -> {
+                        if (valueMap == null) {
+                          Object value =
+                              BeanColumnValueProvider.INSTANCE.getColumnValue(pojo, -1, prop);
+                          binder.setValueForProperty(prop, value.toString());
+                        } else {
+                          Object v = valueMap.get(prop.getPropertyName());
+                          if (v != null) {
+                            binder.setValueForProperty(prop, v.toString());
+                          }
+                        }
+                      });
+              if (binder.isBound()) {
+                boundFacets.add(binder.bind());
+              }
+            } else {
+              boundFacets.add(facet);
             }
-          } else {
-            boundFacets.add(facet);
           }
+          List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
+          String tableName = CacheUtil.schemaName(boundFacets);
+          replaceCachedFacetValues(pojo, tableName, facetCombinations);
         }
-        List<String[]> facetCombinations = CacheUtil.flattenFacets(boundFacets);
-        String tableName = CacheUtil.schemaName(boundFacets);
-        replaceCachedFacetValues(pojo, tableName, facetCombinations);
       }
-    }
 
-    List<List<Facet>> deletedFacetSets =
-        uowCache
-            .values()
-            .stream()
-            .filter(Either::isRight)
-            .map(Either::getRight)
-            .collect(Collectors.toList());
-    for (List<Facet> facets : deletedFacetSets) {
-      String tableName = CacheUtil.schemaName(facets);
-      List<String[]> combinations = CacheUtil.flattenFacets(facets);
-      for (String[] combination : combinations) {
-        String cacheKey = tableName + "." + Arrays.toString(combination);
-        sessionCache.invalidate(cacheKey);
+      List<List<Facet>> deletedFacetSets =
+          uowCache
+              .values()
+              .stream()
+              .filter(Either::isRight)
+              .map(Either::getRight)
+              .collect(Collectors.toList());
+      for (List<Facet> facets : deletedFacetSets) {
+        String tableName = CacheUtil.schemaName(facets);
+        Cache<String, Object> cache = cacheManager.getCache(tableName);
+        if (cache != null) {
+          List<String> keys = CacheUtil.flatKeys(tableName, facets);
+          keys.forEach(key -> cache.remove(key));
+        }
       }
     }
   }
 
   private void replaceCachedFacetValues(
       Object pojo, String tableName, List<String[]> facetCombinations) {
-    for (String[] combination : facetCombinations) {
-      String cacheKey = tableName + "." + Arrays.toString(combination);
-      sessionCache.invalidate(cacheKey);
-      sessionCache.put(cacheKey, pojo);
+    if (cacheManager != null) {
+      for (String[] combination : facetCombinations) {
+        String cacheKey = tableName + "." + Arrays.toString(combination);
+        Cache<String, Object> cache = cacheManager.getCache(tableName);
+        if (cache != null) {
+          if (pojo == null || pojo == HelenusSession.deleted) {
+            cache.remove(cacheKey);
+          } else {
+            cache.put(cacheKey, pojo);
+          }
+        }
+      }
     }
+  }
+
+  public CacheManager getCacheManager() {
+    return cacheManager;
   }
 
   public Metadata getMetadata() {
     return metadata;
-  }
-
-  public UnitOfWork begin() {
-    return this.begin(null);
-  }
-
-  private String extractClassNameFromStackFrame(String classNameOnStack) {
-    String name = null;
-    Matcher m = classNameRegex.matcher(classNameOnStack);
-    if (m.find()) {
-      name = (m.group(1) != null) ? m.group(1) : ((m.group(2) != null) ? m.group(2) : name);
-    } else {
-      name = classNameOnStack;
-    }
-    return name;
-  }
-
-  public synchronized UnitOfWork begin(UnitOfWork parent) {
-    try {
-      Class<? extends UnitOfWork> clazz = unitOfWorkClass;
-      Constructor<? extends UnitOfWork> ctor =
-          clazz.getConstructor(HelenusSession.class, UnitOfWork.class);
-      UnitOfWork uow = ctor.newInstance(this, parent);
-      if (LOG.isInfoEnabled() && uow.getPurpose() == null) {
-        StringBuilder purpose = null;
-        int frame = 0;
-        StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-        String targetClassName = HelenusSession.class.getSimpleName();
-        String stackClassName = null;
-        do {
-          frame++;
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-        } while (!stackClassName.equals(targetClassName) && frame < trace.length);
-        do {
-          frame++;
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-        } while (stackClassName.equals(targetClassName) && frame < trace.length);
-        if (frame < trace.length) {
-          purpose =
-              new StringBuilder()
-                  .append(trace[frame].getClassName())
-                  .append(".")
-                  .append(trace[frame].getMethodName())
-                  .append("(")
-                  .append(trace[frame].getFileName())
-                  .append(":")
-                  .append(trace[frame].getLineNumber())
-                  .append(")");
-          uow.setPurpose(purpose.toString());
-        }
-      }
-      if (parent != null) {
-        parent.addNestedUnitOfWork(uow);
-      }
-      return uow.begin();
-    } catch (NoSuchMethodException
-        | InvocationTargetException
-        | InstantiationException
-        | IllegalAccessException e) {
-      throw new HelenusException(
-          String.format(
-              "Unable to instantiate %s as a UnitOfWork.", unitOfWorkClass.getSimpleName()),
-          e);
-    }
   }
 
   public <E> SelectOperation<E> select(E pojo) {
@@ -424,9 +380,17 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     return new SelectOperation<Fun.ArrayTuple>(this);
   }
 
-  public SelectOperation<Row> selectAll(Class<?> entityClass) {
+  public <E> SelectOperation<E> selectAll(Class<E> entityClass) {
     Objects.requireNonNull(entityClass, "entityClass is empty");
-    return new SelectOperation<Row>(this, Helenus.entity(entityClass));
+    HelenusEntity entity = Helenus.entity(entityClass);
+
+    return new SelectOperation<E>(
+        this,
+        entity,
+        (r) -> {
+          Map<String, Object> map = new ValueProviderMap(r, valueProvider, entity);
+          return (E) Helenus.map(entityClass, map);
+        });
   }
 
   public <E> SelectOperation<Row> selectAll(E pojo) {
@@ -699,23 +663,23 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     } catch (HelenusMappingException e) {
     }
     if (entity != null) {
-      return new InsertOperation<T>(this, entity.getMappingInterface(), true);
+      return new InsertOperation<T>(this, entity, entity.getMappingInterface(), true);
     } else {
-      return this.<T>insert(pojo, null);
+      return this.<T>insert(pojo, null, null);
     }
   }
 
   public <T> InsertOperation<T> insert(Drafted draft) {
-    return insert(draft.build(), draft.mutated());
+    return insert(draft.build(), draft.mutated(), draft.read());
   }
 
-  private <T> InsertOperation<T> insert(T pojo, Set<String> mutations) {
+  private <T> InsertOperation<T> insert(T pojo, Set<String> mutations, Set<String> read) {
     Objects.requireNonNull(pojo, "pojo is empty");
 
     Class<?> iface = MappingUtil.getMappingInterface(pojo);
     HelenusEntity entity = Helenus.entity(iface);
 
-    return new InsertOperation<T>(this, entity, pojo, mutations, true);
+    return new InsertOperation<T>(this, entity, pojo, mutations, read, true);
   }
 
   public InsertOperation<ResultSet> upsert() {
@@ -727,7 +691,7 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   }
 
   public <T> InsertOperation<T> upsert(Drafted draft) {
-    return this.<T>upsert((T) draft.build(), draft.mutated());
+    return this.<T>upsert((T) draft.build(), draft.mutated(), draft.read());
   }
 
   public <T> InsertOperation<T> upsert(T pojo) {
@@ -740,19 +704,19 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
     } catch (HelenusMappingException e) {
     }
     if (entity != null) {
-      return new InsertOperation<T>(this, entity.getMappingInterface(), false);
+      return new InsertOperation<T>(this, entity, entity.getMappingInterface(), false);
     } else {
-      return this.<T>upsert(pojo, null);
+      return this.<T>upsert(pojo, null, null);
     }
   }
 
-  private <T> InsertOperation<T> upsert(T pojo, Set<String> mutations) {
+  private <T> InsertOperation<T> upsert(T pojo, Set<String> mutations, Set<String> read) {
     Objects.requireNonNull(pojo, "pojo is empty");
 
     Class<?> iface = MappingUtil.getMappingInterface(pojo);
     HelenusEntity entity = Helenus.entity(iface);
 
-    return new InsertOperation<T>(this, entity, pojo, mutations, false);
+    return new InsertOperation<T>(this, entity, pojo, mutations, read, false);
   }
 
   public DeleteOperation delete() {
@@ -773,6 +737,9 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
   }
 
   public void close() {
+    if (session == null) {
+      return;
+    }
 
     if (session.isClosed()) {
       return;
@@ -803,11 +770,11 @@ public class HelenusSession extends AbstractSessionOperations implements Closeab
 
     switch (entity.getType()) {
       case TABLE:
-        execute(SchemaUtil.dropTable(entity), true);
+        execute(SchemaUtil.dropTable(entity));
         break;
 
       case UDT:
-        execute(SchemaUtil.dropUserType(entity), true);
+        execute(SchemaUtil.dropUserType(entity));
         break;
 
       default:

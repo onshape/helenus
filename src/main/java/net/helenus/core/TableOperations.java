@@ -35,12 +35,12 @@ public final class TableOperations {
   }
 
   public void createTable(HelenusEntity entity) {
-    sessionOps.execute(SchemaUtil.createTable(entity), true);
+    sessionOps.execute(SchemaUtil.createTable(entity));
     executeBatch(SchemaUtil.createIndexes(entity));
   }
 
   public void dropTable(HelenusEntity entity) {
-    sessionOps.execute(SchemaUtil.dropTable(entity), true);
+    sessionOps.execute(SchemaUtil.dropTable(entity));
   }
 
   public void validateTable(TableMetadata tmd, HelenusEntity entity) {
@@ -79,17 +79,14 @@ public final class TableOperations {
   public void createView(HelenusEntity entity) {
     sessionOps.execute(
         SchemaUtil.createMaterializedView(
-            sessionOps.usingKeyspace(), entity.getName().toCql(), entity),
-        true);
-    // executeBatch(SchemaUtil.createIndexes(entity)); NOTE: Unfortunately C* 3.10
-    // does not yet support 2i on materialized views.
+            sessionOps.usingKeyspace(), entity.getName().toCql(), entity));
+    // executeBatch(SchemaUtil.createIndexes(entity)); NOTE: Unfortunately C* 3.10 does not yet support 2i on materialized views.
   }
 
   public void dropView(HelenusEntity entity) {
     sessionOps.execute(
         SchemaUtil.dropMaterializedView(
-            sessionOps.usingKeyspace(), entity.getName().toCql(), entity),
-        true);
+            sessionOps.usingKeyspace(), entity.getName().toCql(), entity));
   }
 
   public void updateView(TableMetadata tmd, HelenusEntity entity) {
@@ -104,9 +101,6 @@ public final class TableOperations {
 
   private void executeBatch(List<SchemaStatement> list) {
 
-    list.forEach(
-        s -> {
-          sessionOps.execute(s, true);
-        });
+    list.forEach(s -> sessionOps.execute(s));
   }
 }

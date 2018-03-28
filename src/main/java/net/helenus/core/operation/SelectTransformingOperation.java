@@ -56,4 +56,14 @@ public final class SelectTransformingOperation<R, E>
   public Stream<R> transform(ResultSet resultSet) {
     return delegate.transform(resultSet).map(fn);
   }
+
+  @Override
+  public boolean isSessionCacheable() {
+    return delegate.isSessionCacheable();
+  }
+
+  @Override
+  public boolean ignoreCache() {
+    return delegate.ignoreCache();
+  }
 }
