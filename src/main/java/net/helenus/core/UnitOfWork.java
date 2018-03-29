@@ -50,8 +50,7 @@ import org.slf4j.LoggerFactory;
 public class UnitOfWork implements AutoCloseable {
 
   private static final Logger LOG = LoggerFactory.getLogger(UnitOfWork.class);
-  private static final Pattern classNameRegex =
-      Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
+  private static final Pattern classNameRegex = Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
   public final UnitOfWork parent;
   private final List<UnitOfWork> nested = new ArrayList<>();
@@ -122,37 +121,7 @@ public class UnitOfWork implements AutoCloseable {
           };
     }
     this.elapsedTime = Stopwatch.createUnstarted();
-    this.statementCache =
-        new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", cacheLoader, true);
-
-    if (LOG.isInfoEnabled()) {
-      StringBuilder purpose = null;
-      int frame = 0;
-      StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-      String targetClassName = HelenusSession.class.getSimpleName();
-      String stackClassName = null;
-      while (!stackClassName.equals(targetClassName) && frame < trace.length) {
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-          frame++;
-      }
-      while (stackClassName.equals(targetClassName) && frame < trace.length) {
-          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-          frame++;
-      }
-      if (frame < trace.length) {
-        purpose =
-            new StringBuilder()
-                .append(trace[frame].getClassName())
-                .append(".")
-                .append(trace[frame].getMethodName())
-                .append("(")
-                .append(trace[frame].getFileName())
-                .append(":")
-                .append(trace[frame].getLineNumber())
-                .append(")");
-        this.purpose = purpose.toString();
-      }
-    }
+    this.statementCache = new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", cacheLoader, true);
   }
 
   public void addDatabaseTime(String name, Stopwatch amount) {
