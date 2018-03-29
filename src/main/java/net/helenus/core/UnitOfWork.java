@@ -131,14 +131,14 @@ public class UnitOfWork implements AutoCloseable {
       StackTraceElement[] trace = Thread.currentThread().getStackTrace();
       String targetClassName = HelenusSession.class.getSimpleName();
       String stackClassName = null;
-      do {
-        frame++;
-        stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-      } while (!stackClassName.equals(targetClassName) && frame < trace.length);
-      do {
-        frame++;
-        stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
-      } while (stackClassName.equals(targetClassName) && frame < trace.length);
+      while (!stackClassName.equals(targetClassName) && frame < trace.length) {
+          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
+          frame++;
+      }
+      while (stackClassName.equals(targetClassName) && frame < trace.length) {
+          stackClassName = extractClassNameFromStackFrame(trace[frame].getClassName());
+          frame++;
+      }
       if (frame < trace.length) {
         purpose =
             new StringBuilder()
