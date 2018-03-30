@@ -1,6 +1,6 @@
 package net.helenus.core.cache;
 
-
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -22,15 +22,16 @@ import javax.cache.processor.MutableEntry;
 public class MapCache<K, V> implements Cache<K, V> {
   private final CacheManager manager;
   private final String name;
-  private Map<K, V> map = new ConcurrentHashMap<K, V>();
-  private Set<CacheEntryRemovedListener> cacheEntryRemovedListeners = new HashSet<>();
+  private Map<K, V> map = new ConcurrentHashMap<>();
+  private Set<K> deletes = Collections.synchronizedSet(new HashSet<>());
+  private Set<CacheEntryRemovedListener<K, V>> cacheEntryRemovedListeners = new HashSet<>();
   private CacheLoader<K, V> cacheLoader = null;
   private boolean isReadThrough = false;
-  private Configuration<K, V> configuration = new MapConfiguration<K, V>();
 
   private static class MapConfiguration<K, V> implements Configuration<K, V> {
+	private static final long serialVersionUID = 6093947542772516209L;
 
-    @Override
+	@Override
     public Class<K> getKeyType() {
       return null;
     }
@@ -52,6 +53,11 @@ public class MapCache<K, V> implements Cache<K, V> {
     this.name = name;
     this.cacheLoader = cacheLoader;
     this.isReadThrough = isReadThrough;
+  }
+
+  /** Non-interface method; should only be called by UnitOfWork when merging to an enclosing UnitOfWork. */
+  public Set<K> getDeletions() {
+	  return new HashSet<>(deletes);
   }
 
   /** {@inheritDoc} */
@@ -193,6 +199,7 @@ public class MapCache<K, V> implements Cache<K, V> {
     boolean removed = false;
     synchronized (map) {
       removed = map.remove(key) != null;
+      deletes.add(key);
       notifyRemovedListeners(key);
     }
     return removed;
@@ -205,6 +212,7 @@ public class MapCache<K, V> implements Cache<K, V> {
       V value = map.get(key);
       if (value != null && oldValue.equals(value)) {
         map.remove(key);
+        deletes.add(key);
         notifyRemovedListeners(key);
         return true;
       }
@@ -219,6 +227,7 @@ public class MapCache<K, V> implements Cache<K, V> {
       V oldValue = null;
       oldValue = map.get(key);
       map.remove(key);
+      deletes.add(key);
       notifyRemovedListeners(key);
       return oldValue;
     }
@@ -273,6 +282,7 @@ public class MapCache<K, V> implements Cache<K, V> {
           keys.remove(key);
         }
       }
+      deletes.addAll(keys);
     }
     notifyRemovedListeners(keys);
   }
@@ -283,6 +293,7 @@ public class MapCache<K, V> implements Cache<K, V> {
     synchronized (map) {
       Set<K> keys = map.keySet();
       map.clear();
+      deletes.addAll(keys);
       notifyRemovedListeners(keys);
     }
   }
@@ -291,6 +302,7 @@ public class MapCache<K, V> implements Cache<K, V> {
   @Override
   public void clear() {
     map.clear();
+    deletes.clear();
   }
 
   /** {@inheritDoc} */
@@ -386,6 +398,7 @@ public class MapCache<K, V> implements Cache<K, V> {
 
   /** {@inheritDoc} */
   @Override
+  @SuppressWarnings("unchecked")
   public <T> T unwrap(Class<T> clazz) {
     return (T) map;
   }
