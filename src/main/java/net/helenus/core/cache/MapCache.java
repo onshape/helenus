@@ -1,6 +1,5 @@
 package net.helenus.core.cache;
 
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -22,13 +21,13 @@ import javax.cache.processor.MutableEntry;
 public class MapCache<K, V> implements Cache<K, V> {
   private final CacheManager manager;
   private final String name;
-  private Map<K, V> map = new ConcurrentHashMap<K, V>();
-  private Set<CacheEntryRemovedListener> cacheEntryRemovedListeners = new HashSet<>();
+  private Map<K, V> map = new ConcurrentHashMap<>();
+  private Set<CacheEntryRemovedListener<K, V>> cacheEntryRemovedListeners = new HashSet<>();
   private CacheLoader<K, V> cacheLoader = null;
   private boolean isReadThrough = false;
-  private Configuration<K, V> configuration = new MapConfiguration<K, V>();
 
   private static class MapConfiguration<K, V> implements Configuration<K, V> {
+    private static final long serialVersionUID = 6093947542772516209L;
 
     @Override
     public Class<K> getKeyType() {
@@ -54,6 +53,7 @@ public class MapCache<K, V> implements Cache<K, V> {
     this.isReadThrough = isReadThrough;
   }
 
+
   /** {@inheritDoc} */
   @Override
   public V get(K key) {
@@ -77,23 +77,23 @@ public class MapCache<K, V> implements Cache<K, V> {
     Map<K, V> result = null;
     synchronized (map) {
       result = new HashMap<K, V>(keys.size());
-      for (K key : keys) {
+      Iterator<? extends K> it = keys.iterator();
+      while (it.hasNext()) {
+        K key = it.next();
         V value = map.get(key);
         if (value != null) {
           result.put(key, value);
-          keys.remove(key);
+          it.remove();
         }
       }
-      if (isReadThrough && cacheLoader != null) {
-        for (K key : keys) {
-          Map<K, V> loadedValues = cacheLoader.loadAll(keys);
-          for (Map.Entry<K, V> entry : loadedValues.entrySet()) {
-            V v = entry.getValue();
-            if (v != null) {
-              K k = entry.getKey();
-              map.put(k, v);
-              result.put(k, v);
-            }
+      if (keys.size() != 0 && isReadThrough && cacheLoader != null) {
+        Map<K, V> loadedValues = cacheLoader.loadAll(keys);
+        for (Map.Entry<K, V> entry : loadedValues.entrySet()) {
+          V v = entry.getValue();
+          if (v != null) {
+            K k = entry.getKey();
+            map.put(k, v);
+            result.put(k, v);
           }
         }
       }
@@ -152,11 +152,10 @@ public class MapCache<K, V> implements Cache<K, V> {
     V result = null;
     synchronized (map) {
       result = map.get(key);
-      if (value == null && isReadThrough && cacheLoader != null) {
+      if (result == null && isReadThrough && cacheLoader != null) {
         V loadedValue = cacheLoader.load(key);
         if (loadedValue != null) {
-          map.put(key, value);
-          value = loadedValue;
+          result = loadedValue;
         }
       }
       map.put(key, value);
@@ -266,11 +265,13 @@ public class MapCache<K, V> implements Cache<K, V> {
   @Override
   public void removeAll(Set<? extends K> keys) {
     synchronized (map) {
-      for (K key : keys) {
+      Iterator<? extends K> it = keys.iterator();
+      while (it.hasNext()) {
+        K key = it.next();
         if (map.containsKey(key)) {
           map.remove(key);
         } else {
-          keys.remove(key);
+          it.remove();
         }
       }
     }
@@ -306,6 +307,7 @@ public class MapCache<K, V> implements Cache<K, V> {
   @Override
   public <T> T invoke(K key, EntryProcessor<K, V, T> entryProcessor, Object... arguments)
       throws EntryProcessorException {
+    // TODO
     return null;
   }
 
@@ -386,6 +388,7 @@ public class MapCache<K, V> implements Cache<K, V> {
 
   /** {@inheritDoc} */
   @Override
+  @SuppressWarnings("unchecked")
   public <T> T unwrap(Class<T> clazz) {
     return (T) map;
   }
