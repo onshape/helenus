@@ -17,12 +17,12 @@ package net.helenus.test.integration.core.unitofwork;
 
 import static net.helenus.core.Query.eq;
 
-import ca.exprofesso.guava.jcache.GuavaCachingProvider;
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.utils.UUIDs;
+
 import java.io.Serializable;
 import java.util.Date;
+import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
 import javax.cache.CacheManager;
 import javax.cache.Caching;
 import javax.cache.configuration.MutableConfiguration;
@@ -42,6 +42,11 @@ import net.helenus.test.integration.build.AbstractEmbeddedCassandraTest;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import ca.exprofesso.guava.jcache.GuavaCachingProvider;
+import com.datastax.driver.core.ConsistencyLevel;
+import com.datastax.driver.core.utils.UUIDs;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 @Table
 @Cacheable
@@ -549,5 +554,164 @@ public class UnitOfWorkTest extends AbstractEmbeddedCassandraTest {
     Assert.assertFalse(w1 == w4);
     Assert.assertTrue(w1.equals(w4));
     Assert.assertTrue(w4.equals(w1));
+  }
+
+  @Test
+  public void getAllLoadAllTest() throws Exception {
+      String tableName = MappingUtil.getTableName(Widget.class, false).toString();
+      UUID uuid1 = UUIDs.random();
+      UUID uuid2 = UUIDs.random();
+      UUID uuid3 = UUIDs.random();
+      String k1 = tableName + "." + uuid1.toString();
+      String k2 = tableName + "." + uuid2.toString();
+      String k3 = tableName + "." + uuid3.toString();
+      Set<String> allKeys = ImmutableSet.<String>of(k1, k2, k3);
+
+      try (UnitOfWork uow1 = session.begin()) {
+          Widget w1 = session.<Widget>insert(widget).value(widget::id, uuid1).sync(uow1);
+          Widget w2 = session.<Widget>insert(widget).value(widget::id, uuid2).sync(uow1);
+          uow1.getCache().put(k1, w1);
+          uow1.getCache().put(k2, w2);
+
+          Map<String, Object> results = uow1.getCache().getAll(allKeys);
+          Assert.assertEquals(2, results.entrySet().size());
+          Assert.assertEquals(results, ImmutableMap.of(k1, w1, k2, w2));
+
+          // getAll tests
+          try (UnitOfWork uow2 = session.begin(uow1)) {
+              results = uow2.getCache().getAll(allKeys);
+              Assert.assertEquals(2, results.entrySet().size());
+              Assert.assertEquals(results, ImmutableMap.of(k1, w1, k2, w2));
+
+              Widget w3 = session.<Widget>insert(widget).value(widget::id, uuid3).sync(uow2);
+              uow2.getCache().put(k3, w3);
+              results = uow2.getCache().getAll(allKeys);
+              Assert.assertEquals(3, results.entrySet().size());
+              Assert.assertEquals(results, ImmutableMap.of(k1, w1, k2, w2, k3, w3));
+
+              boolean removed = uow2.getCache().remove(k2);
+              Assert.assertTrue(removed);
+              removed = uow2.getCache().remove(k2);
+              Assert.assertFalse(removed);
+              results = uow2.getCache().getAll(allKeys);
+              Assert.assertEquals(2, results.size());
+              Assert.assertEquals(results, ImmutableMap.of(k1, w1, k3, w3));
+
+              // Propagate changes to parent UOW for below tests.
+              uow2.commit();
+          }
+
+          // loadAll tests
+          try (UnitOfWork uow3 = session.begin(uow1)) {
+              uow3.getCache().loadAll(allKeys, false, null);
+              Assert.assertTrue(uow3.getCache().containsKey(k1));
+              Assert.assertTrue(uow3.getCache().containsKey(k3));
+              Assert.assertFalse(uow3.getCache().containsKey(k2));
+              Assert.assertEquals(w1, uow3.getCache().get(k1));
+          }
+
+          try (UnitOfWork uow4 = session.begin(uow1)) {
+              UUID uuid3Updated = UUIDs.random();
+              Widget w3Updated = session.<Widget>insert(widget).value(widget::id,  uuid3Updated).sync(uow4);
+
+              // Insert a value for a known key, and load the cache without replacing existing values
+              uow4.getCache().put(k3, w3Updated);
+              Assert.assertEquals(w3Updated,  uow4.getCache().get(k3));
+              uow4.getCache().loadAll(allKeys, false, null);
+              Assert.assertEquals(w3Updated, uow4.getCache().get(k3));
+
+              // Insert a value for a known key, and load the cache by replacing existing values
+              UnitOfWork uow5 = session.begin(uow1);
+              uow5.getCache().put(k3, w3Updated);
+              Assert.assertEquals(w3Updated,  uow5.getCache().get(k3));
+              uow5.getCache().loadAll(allKeys, true, null);
+              Assert.assertNotNull(uow5.getCache().get(k3));
+              Assert.assertNotEquals(w3Updated,  uow5.getCache().get(k3));
+          }
+      }
+  }
+
+  @Test
+  public void getAndPutTest() throws Exception {
+      String tableName = MappingUtil.getTableName(Widget.class, false).toString();
+      UUID uuid1 = UUIDs.random();
+      UUID uuid2 = UUIDs.random();
+      String k1 = tableName + "." + uuid1.toString();
+
+      try (UnitOfWork uow1 = session.begin()) {
+          Widget w1 = session.<Widget>insert(widget).value(widget::id, uuid1).sync(uow1);
+          uow1.getCache().put(k1, w1);
+          try (UnitOfWork uow2 = session.begin(uow1)) {
+              Widget w2 = session.<Widget>insert(widget).value(widget::id, uuid2).sync(uow2);
+              Widget value = (Widget) uow2.getCache().getAndPut(k1, w2);
+              Assert.assertEquals(w1, value);
+              value = (Widget) uow2.getCache().get(k1);
+              Assert.assertEquals(w2, value);
+          }
+      }
+  }
+
+  @Test
+  public void removeAllTest() throws Exception {
+      String tableName = MappingUtil.getTableName(Widget.class, false).toString();
+      UUID uuid1 = UUIDs.random();
+      UUID uuid2 = UUIDs.random();
+      String k1 = tableName + "." + uuid1.toString();
+      String k2 = tableName + "." + uuid2.toString();
+      Set<String> keys = ImmutableSet.of(k1, k2, "noValue");
+
+      try (UnitOfWork uow = session.begin()) {
+          Widget w1 = session.<Widget>insert(widget).value(widget::id, uuid1).sync(uow);
+          Widget w2 = session.<Widget>insert(widget).value(widget::id, uuid2).sync(uow);
+          uow.getCache().put(k1, w1);
+          uow.getCache().put(k2, w2);
+          uow.getCache().removeAll(keys);
+      }
+  }
+
+  @Test
+  public void testDeleteInNestedUOW() throws Exception {
+      String tableName = MappingUtil.getTableName(Widget.class, false).toString();
+      UUID uuid1 = UUIDs.random();
+      UUID uuid2 = UUIDs.random();
+      String k1 = tableName + "." + uuid1.toString();
+      String k2 = tableName + "." + uuid2.toString();
+
+      try (UnitOfWork uow1 = session.begin()) {
+          Widget w1 = session.<Widget>insert(widget).value(widget::id, uuid1)
+              .value(widget::name, RandomString.make(10))
+              .sync(uow1);
+          Widget w2 = session.<Widget>insert(widget).value(widget::id, uuid2)
+              .value(widget::name, RandomString.make(20))
+              .sync(uow1);
+         uow1.getCache().put(k1, w1);
+         uow1.getCache().put(k2, w2);
+
+          try (UnitOfWork uow2 = session.begin(uow1)) {
+              Object o1 = uow2.getCache().get(k1);
+              Object o2 = uow2.getCache().get(k2);
+              Assert.assertEquals(w1, o1);
+              Assert.assertEquals(w2, o2);
+
+              // k1 should not be available in uow2, but available in uow1.
+              uow2.getCache().remove(k1);
+              Assert.assertNull(uow2.getCache().get(k1));
+              Assert.assertNotNull(uow1.getCache().get(k1));
+
+              // Post-commit, k1 shouldn't be availble in uow1 either
+              uow2.commit();
+              Assert.assertNull(uow2.getCache().get(k1));
+              Assert.assertNull(uow1.getCache().get(k1));
+
+              try (UnitOfWork uow3 = session.begin(uow2)) {
+                  uow3.getCache().get(k1);
+                  uow3.getCache().get(k2);
+                  uow3.getCache().remove(k2);
+              }
+          }
+
+          uow1.getCache().get(k1);
+          uow1.getCache().get(k2);
+      }
   }
 }
