@@ -22,32 +22,15 @@ import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import com.google.common.collect.TreeTraverser;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
-import javax.cache.configuration.CacheEntryListenerConfiguration;
-import javax.cache.configuration.Configuration;
 import javax.cache.integration.CacheLoader;
 import javax.cache.integration.CacheLoaderException;
-import javax.cache.integration.CompletionListener;
-import javax.cache.processor.EntryProcessor;
-import javax.cache.processor.EntryProcessorException;
-import javax.cache.processor.EntryProcessorResult;
-
 import net.helenus.core.cache.CacheUtil;
 import net.helenus.core.cache.Facet;
 import net.helenus.core.cache.MapCache;
@@ -68,7 +51,7 @@ public class UnitOfWork implements AutoCloseable {
   public final UnitOfWork parent;
   private final List<UnitOfWork> nested = new ArrayList<>();
   private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
-  private final EvictTrackingMapCache<String, Object> statementCache;
+  private final MapCache<String, Object> statementCache;
   protected final HelenusSession session;
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
@@ -123,7 +106,7 @@ public class UnitOfWork implements AutoCloseable {
           };
     }
     this.elapsedTime = Stopwatch.createUnstarted();
-    this.statementCache = new EvictTrackingMapCache<String, Object>(null, "UOW(" + hashCode() + ")", cacheLoader, true);
+    this.statementCache = new MapCache<String, Object>(null, "UOW(" + hashCode() + ")", cacheLoader, true);
   }
 
   public void addDatabaseTime(String name, Stopwatch amount) {
@@ -583,222 +566,5 @@ public class UnitOfWork implements AutoCloseable {
 
   public long committedAt() {
     return committedAt;
-  }
-
- private static class EvictTrackingMapCache<K, V> implements Cache<K, V> {
-      private final Set<K> deletes;
-      private final Cache<K, V> delegate;
-
-      public EvictTrackingMapCache(CacheManager manager, String name, CacheLoader<K, V> cacheLoader,
-              boolean isReadThrough) {
-          deletes = Collections.synchronizedSet(new HashSet<>());
-          delegate = new MapCache<>(manager, name, cacheLoader, isReadThrough);
-      }
-
-      /** Non-interface method; should only be called by UnitOfWork when merging to an enclosing UnitOfWork. */
-      public Set<K> getDeletions() {
-          return new HashSet<>(deletes);
-      }
-
-      @Override
-      public V get(K key) {
-          if (deletes.contains(key)) {
-              return null;
-          }
-
-          return delegate.get(key);
-      }
-
-      @Override
-      public Map<K, V> getAll(Set<? extends K> keys) {
-          Set<? extends K> clonedKeys = new HashSet<>(keys);
-          clonedKeys.removeAll(deletes);
-          return delegate.getAll(clonedKeys);
-      }
-
-      @Override
-      public boolean containsKey(K key) {
-          if (deletes.contains(key)) {
-              return false;
-          }
-
-          return delegate.containsKey(key);
-      }
-
-      @Override
-      public void loadAll(Set<? extends K> keys, boolean replaceExistingValues, CompletionListener listener) {
-          Set<? extends K> clonedKeys = new HashSet<>(keys);
-          clonedKeys.removeAll(deletes);
-          delegate.loadAll(clonedKeys, replaceExistingValues, listener);
-      }
-
-      @Override
-      public void put(K key, V value) {
-          if (deletes.contains(key)) {
-              deletes.remove(key);
-          }
-
-          delegate.put(key, value);
-      }
-
-      @Override
-      public V getAndPut(K key, V value) {
-          if (deletes.contains(key)) {
-              deletes.remove(key);
-          }
-
-          return delegate.getAndPut(key, value);
-      }
-
-      @Override
-      public void putAll(Map<? extends K, ? extends V> map) {
-          deletes.removeAll(map.keySet());
-          delegate.putAll(map);
-      }
-
-      @Override
-      public synchronized boolean putIfAbsent(K key, V value) {
-          if (!delegate.containsKey(key) && deletes.contains(key)) {
-              deletes.remove(key);
-          }
-
-          return delegate.putIfAbsent(key,  value);
-      }
-
-      @Override
-      public boolean remove(K key) {
-          boolean removed = delegate.remove(key);
-          deletes.add(key);
-          return removed;
-      }
-
-      @Override
-      public boolean remove(K key, V value) {
-          boolean removed = delegate.remove(key, value);
-          if (removed) {
-              deletes.add(key);
-          }
-
-          return removed;
-      }
-
-      @Override
-      public V getAndRemove(K key) {
-          V value = delegate.getAndRemove(key);
-          deletes.add(key);
-          return value;
-      }
-
-      @Override
-      public void removeAll(Set<? extends K> keys) {
-          Set<? extends K> cloneKeys = new HashSet<>(keys);
-          delegate.removeAll(cloneKeys);
-          deletes.addAll(cloneKeys);
-      }
-
-      @Override
-      @SuppressWarnings("unchecked")
-      public synchronized void removeAll() {
-          Map<K, V> impl = delegate.unwrap(Map.class);
-          Set<K> keys = impl.keySet();
-          delegate.removeAll();
-          deletes.addAll(keys);
-      }
-
-      @Override
-      public void clear() {
-          delegate.clear();
-          deletes.clear();
-      }
-
-    @Override
-    public boolean replace(K key, V oldValue, V newValue) {
-        if (deletes.contains(key)) {
-            return false;
-        }
-
-        return delegate.replace(key, oldValue, newValue);
-    }
-
-    @Override
-    public boolean replace(K key, V value) {
-        if (deletes.contains(key)) {
-            return false;
-        }
-
-        return delegate.replace(key, value);
-    }
-
-    @Override
-    public V getAndReplace(K key, V value) {
-        if (deletes.contains(key)) {
-            return null;
-        }
-
-        return delegate.getAndReplace(key, value);
-    }
-
-    @Override
-    public <C extends Configuration<K, V>> C getConfiguration(Class<C> clazz) {
-        return delegate.getConfiguration(clazz);
-    }
-
-    @Override
-    public <T> T invoke(K key, EntryProcessor<K, V, T> processor, Object... arguments)
-            throws EntryProcessorException {
-        if (deletes.contains(key)) {
-            return null;
-        }
-
-        return delegate.invoke(key,  processor, arguments);
-    }
-
-    @Override
-    public <T> Map<K, EntryProcessorResult<T>> invokeAll(Set<? extends K> keys, EntryProcessor<K, V, T> processor,
-            Object... arguments) {
-        Set<? extends K> clonedKeys = new HashSet<>(keys);
-        clonedKeys.removeAll(deletes);
-        return delegate.invokeAll(clonedKeys, processor, arguments);
-    }
-
-    @Override
-    public String getName() {
-        return delegate.getName();
-    }
-
-    @Override
-    public CacheManager getCacheManager() {
-        return delegate.getCacheManager();
-    }
-
-    @Override
-    public void close() {
-        delegate.close();
-    }
-
-    @Override
-    public boolean isClosed() {
-        return delegate.isClosed();
-    }
-
-    @Override
-    public <T> T unwrap(Class<T> clazz) {
-        return delegate.unwrap(clazz);
-    }
-
-    @Override
-    public void registerCacheEntryListener(CacheEntryListenerConfiguration<K, V> cacheEntryListenerConfiguration) {
-        delegate.registerCacheEntryListener(cacheEntryListenerConfiguration);
-    }
-
-    @Override
-    public void deregisterCacheEntryListener(CacheEntryListenerConfiguration<K, V> cacheEntryListenerConfiguration) {
-        delegate.deregisterCacheEntryListener(cacheEntryListenerConfiguration);
-    }
-
-    @Override
-    public Iterator<Entry<K, V>> iterator() {
-        return delegate.iterator();
-    }
   }
 }
