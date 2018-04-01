@@ -26,6 +26,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
@@ -46,7 +48,9 @@ import org.slf4j.LoggerFactory;
 
 /** Encapsulates the concept of a "transaction" as a unit-of-work. */
 public class UnitOfWork implements AutoCloseable {
+
   private static final Logger LOG = LoggerFactory.getLogger(UnitOfWork.class);
+  private static final Pattern classNameRegex = Pattern.compile("^(?:\\w+\\.)+(?:(\\w+)|(\\w+)\\$.*)$");
 
   public final UnitOfWork parent;
   private final List<UnitOfWork> nested = new ArrayList<>();
@@ -61,7 +65,7 @@ public class UnitOfWork implements AutoCloseable {
   protected int databaseLookups = 0;
   protected final Stopwatch elapsedTime;
   protected Map<String, Double> databaseTime = new HashMap<>();
-  protected double cacheLookupTimeMSecs = 0.0d;
+  protected double cacheLookupTimeMSecs = 0.0;
   private List<CommitThunk> commitThunks = new ArrayList<CommitThunk>();
   private List<CommitThunk> abortThunks = new ArrayList<CommitThunk>();
   private List<CompletableFuture<?>> asyncOperationFutures = new ArrayList<CompletableFuture<?>>();
@@ -69,6 +73,17 @@ public class UnitOfWork implements AutoCloseable {
   private boolean committed = false;
   private long committedAt = 0L;
   private BatchOperation batch;
+
+  private String extractClassNameFromStackFrame(String classNameOnStack) {
+    String name = null;
+    Matcher m = classNameRegex.matcher(classNameOnStack);
+    if (m.find()) {
+      name = (m.group(1) != null) ? m.group(1) : ((m.group(2) != null) ? m.group(2) : name);
+    } else {
+      name = classNameOnStack;
+    }
+    return name;
+  }
 
   public UnitOfWork(HelenusSession session) {
     this(session, null);
@@ -82,7 +97,7 @@ public class UnitOfWork implements AutoCloseable {
       parent.addNestedUnitOfWork(this);
     }
     this.session = session;
-    CacheLoader<String, Object> cacheLoader = null;
+    CacheLoader cacheLoader = null;
     if (parent != null) {
       cacheLoader =
           new CacheLoader<String, Object>() {
@@ -348,7 +363,7 @@ public class UnitOfWork implements AutoCloseable {
       throws HelenusException, TimeoutException {
 
     if (isDone()) {
-      return PostCommitFunction.NULL_ABORT;
+      return new PostCommitFunction(this, null, null, false);
     }
 
     // Only the outer-most UOW batches statements for commit time, execute them.
@@ -384,7 +399,7 @@ public class UnitOfWork implements AutoCloseable {
         }
       }
 
-      return PostCommitFunction.NULL_ABORT;
+      return new PostCommitFunction(this, null, null, false);
     } else {
       committed = true;
       aborted = false;
@@ -438,11 +453,11 @@ public class UnitOfWork implements AutoCloseable {
           LOG.info(logTimers("committed"));
         }
 
-        return PostCommitFunction.NULL_COMMIT;
+        return new PostCommitFunction(this, null, null, true);
       } else {
+
         // Merge cache and statistics into parent if there is one.
         parent.statementCache.putAll(statementCache.<Map>unwrap(Map.class));
-        parent.statementCache.removeAll(statementCache.getDeletions());
         parent.mergeCache(cache);
         parent.addBatched(batch);
         if (purpose != null) {
@@ -468,15 +483,15 @@ public class UnitOfWork implements AutoCloseable {
     // Constructor<T> ctor = clazz.getConstructor(conflictExceptionClass);
     // T object = ctor.newInstance(new Object[] { String message });
     // }
-    return new PostCommitFunction<Void, Void>(commitThunks, abortThunks, true);
+    return new PostCommitFunction(this, commitThunks, abortThunks, true);
   }
 
-  private void addBatched(BatchOperation batchArg) {
-    if (batchArg != null) {
+  private void addBatched(BatchOperation batch) {
+    if (batch != null) {
       if (this.batch == null) {
-        this.batch = batchArg;
+        this.batch = batch;
       } else {
-        this.batch.addAll(batchArg);
+        this.batch.addAll(batch);
       }
     }
   }
