@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
@@ -54,6 +55,7 @@ import net.helenus.core.cache.MapCache;
 import net.helenus.core.operation.AbstractOperation;
 import net.helenus.core.operation.BatchOperation;
 import net.helenus.mapping.MappingUtil;
+import net.helenus.support.CheckedRunnable;
 import net.helenus.support.Either;
 import net.helenus.support.HelenusException;
 import org.apache.commons.lang3.SerializationUtils;
@@ -78,9 +80,10 @@ public class UnitOfWork implements AutoCloseable {
   protected int databaseLookups = 0;
   protected final Stopwatch elapsedTime;
   protected Map<String, Double> databaseTime = new HashMap<>();
-  protected double cacheLookupTimeMSecs = 0.0d;
-  private List<CommitThunk> commitThunks = new ArrayList<CommitThunk>();
-  private List<CommitThunk> abortThunks = new ArrayList<CommitThunk>();
+  protected double cacheLookupTimeMSecs = 0.0;
+  private List<CheckedRunnable> commitThunks = new ArrayList<>();
+  private List<CheckedRunnable> abortThunks = new ArrayList<>();
+  private Consumer<? super Throwable> exceptionallyThunk;
   private List<CompletableFuture<?>> asyncOperationFutures = new ArrayList<CompletableFuture<?>>();
   private boolean aborted = false;
   private boolean committed = false;
@@ -243,10 +246,16 @@ public class UnitOfWork implements AutoCloseable {
     return s;
   }
 
-  private void applyPostCommitFunctions(String what, List<CommitThunk> thunks) {
+  private void applyPostCommitFunctions(String what, List<CheckedRunnable> thunks, Consumer<? super Throwable> exceptionallyThunk) {
     if (!thunks.isEmpty()) {
-      for (CommitThunk f : thunks) {
-        f.apply();
+      for (CheckedRunnable f : thunks) {
+          try {
+              f.run();
+          } catch (Throwable t) {
+              if (exceptionallyThunk != null) {
+                  exceptionallyThunk.accept(t);
+              }
+          }
       }
     }
   }
@@ -361,8 +370,7 @@ public class UnitOfWork implements AutoCloseable {
    * @return a function from which to chain work that only happens when commit is successful
    * @throws HelenusException when the work overlaps with other concurrent writers.
    */
-  public synchronized PostCommitFunction<Void, Void> commit()
-      throws HelenusException, TimeoutException {
+  public synchronized PostCommitFunction<Void, Void> commit() throws HelenusException {
 
     if (isDone()) {
       return PostCommitFunction.NULL_ABORT;
@@ -392,7 +400,7 @@ public class UnitOfWork implements AutoCloseable {
             .postOrderTraversal(this)
             .forEach(
                 uow -> {
-                  applyPostCommitFunctions("aborted", abortThunks);
+                  applyPostCommitFunctions("aborted", abortThunks, exceptionallyThunk);
                 });
 
         elapsedTime.stop();
@@ -413,7 +421,7 @@ public class UnitOfWork implements AutoCloseable {
             .postOrderTraversal(this)
             .forEach(
                 uow -> {
-                  applyPostCommitFunctions("committed", uow.commitThunks);
+                  applyPostCommitFunctions("committed", uow.commitThunks, exceptionallyThunk);
                 });
 
         // Merge our statement cache into the session cache if it exists.
@@ -485,7 +493,7 @@ public class UnitOfWork implements AutoCloseable {
     // Constructor<T> ctor = clazz.getConstructor(conflictExceptionClass);
     // T object = ctor.newInstance(new Object[] { String message });
     // }
-    return new PostCommitFunction<Void, Void>(commitThunks, abortThunks, true);
+    return new PostCommitFunction<Void, Void>(commitThunks, abortThunks, exceptionallyThunk, true);
   }
 
   private void addBatched(BatchOperation batchArg) {
@@ -518,7 +526,7 @@ public class UnitOfWork implements AutoCloseable {
           .postOrderTraversal(this)
           .forEach(
               uow -> {
-                applyPostCommitFunctions("aborted", uow.abortThunks);
+                applyPostCommitFunctions("aborted", uow.abortThunks, exceptionallyThunk);
                 uow.abortThunks.clear();
               });
 
