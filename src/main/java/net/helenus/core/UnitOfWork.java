@@ -531,7 +531,9 @@ public class UnitOfWork implements AutoCloseable {
               });
 
       if (parent == null) {
-        elapsedTime.stop();
+        if (elapsedTime.isRunning()) {
+          elapsedTime.stop();
+        }
         if (LOG.isInfoEnabled()) {
           LOG.info(logTimers("aborted"));
         }
