@@ -68,9 +68,9 @@ public class UnitOfWork implements AutoCloseable {
   private static final Logger LOG = LoggerFactory.getLogger(UnitOfWork.class);
 
   public final UnitOfWork parent;
-  private final List<UnitOfWork> nested = new ArrayList<>();
-  private final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
-  private final EvictTrackingMapCache<String, Object> statementCache;
+  protected final List<UnitOfWork> nested = new ArrayList<>();
+  protected final Table<String, String, Either<Object, List<Facet>>> cache = HashBasedTable.create();
+  protected final EvictTrackingMapCache<String, Object> statementCache;
   protected final HelenusSession session;
   protected String purpose;
   protected List<String> nestedPurposes = new ArrayList<String>();
@@ -718,6 +718,7 @@ public class UnitOfWork implements AutoCloseable {
       @Override
       public void clear() {
           delegate.clear();
+          // TODO(gburd): all parents too
           deletes.clear();
       }
 
