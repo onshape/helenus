@@ -412,8 +412,12 @@ public class MapCache<K, V> implements Cache<K, V> {
   @Override
   public Iterator<Entry<K, V>> iterator() {
     synchronized (map) {
+      Cache<K, V> self = this;
+
       return new Iterator<Entry<K, V>>() {
 
+        Cache<K, V> cache = self;
+        Cache.Entry<K, V> lastEntry;
         Iterator<Map.Entry<K, V>> entries = map.entrySet().iterator();
 
         @Override
@@ -422,11 +426,11 @@ public class MapCache<K, V> implements Cache<K, V> {
         }
 
         @Override
-        public Entry<K, V> next() {
+        public Cache.Entry<K, V> next() {
           Map.Entry<K, V> entry = entries.next();
-          return new Entry<K, V>() {
-            K key = entry.getKey();
-            V value = entry.getValue();
+          lastEntry = new Cache.Entry<K, V>() {
+            K key = (K) entry.getKey();
+            V value = (V) entry.getValue();
 
             @Override
             public K getKey() {
@@ -440,14 +444,20 @@ public class MapCache<K, V> implements Cache<K, V> {
 
             @Override
             public <T> T unwrap(Class<T> clazz) {
+              if (Map.Entry.class.isAssignableFrom(clazz)) {
+                  return (T) entry;
+              }
               return null;
             }
           };
+          return lastEntry;
         }
 
         @Override
         public void remove() {
-          throw new UnsupportedOperationException();
+            if (lastEntry != null) {
+                cache.remove((K) lastEntry.getKey());
+            }
         }
       };
     }
