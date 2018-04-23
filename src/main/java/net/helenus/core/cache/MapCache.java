@@ -390,7 +390,10 @@ public class MapCache<K, V> implements Cache<K, V> {
   @Override
   @SuppressWarnings("unchecked")
   public <T> T unwrap(Class<T> clazz) {
-    return (T) map;
+    if (Map.class.isAssignableFrom(clazz)) {
+        return (T) map;
+    }
+    return null;
   }
 
   /** {@inheritDoc} */
