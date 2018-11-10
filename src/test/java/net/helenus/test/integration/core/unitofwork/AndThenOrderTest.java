@@ -1,5 +1,6 @@
 /*
- *      Copyright (C) 2015 The Helenus Authors
+ *      Copyright (C) 2015 The Casser Authors
+ *      Copyright (C) 2015-2018 The Helenus Authors
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
  *   you may not use this file except in compliance with the License.
@@ -76,6 +77,10 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
         Arrays.equals(q.toArray(new String[5]), new String[] {"1", "2", "3", "4", "5"}));
   }
 
+  private void throwAnException() throws Throwable {
+      throw new Exception("oops");
+  }
+
   @Test
   public void testExceptionWithinAndThen() throws Exception {
     List<String> q = new ArrayList<String>(5);
@@ -83,6 +88,7 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
 
     uow5 = session.begin();
     uow4 = session.begin(uow5);
+    Exception ex = new Exception();
     try {
       uow3 = session.begin(uow4);
       uow1 = session.begin(uow3);
@@ -122,7 +128,9 @@ public class AndThenOrderTest extends AbstractEmbeddedCassandraTest {
           .orElse(
               () -> {
                 q.add("d");
-              });
+                throwAnException();
+              })
+          .exceptionally(e -> Assert.assertEquals(e.getMessage(), "oops"));
       throw new Exception();
     } catch (Exception e) {
       uow4.abort();

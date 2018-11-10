@@ -1,5 +1,6 @@
 /*
- *      Copyright (C) 2015 The Helenus Authors
+ *      Copyright (C) 2015 The Casser Authors
+ *      Copyright (C) 2015-2018 The Helenus Authors
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
  *   you may not use this file except in compliance with the License.
@@ -65,38 +66,42 @@ public class BatchOperation extends Operation<Long> {
     return this;
   }
 
-  public Long sync() throws TimeoutException {
+  public Long sync() {
     if (operations.size() == 0) return 0L;
     final Timer.Context context = requestLatency.time();
     try {
-      batch.setDefaultTimestamp(timestampGenerator.next());
-      ResultSet resultSet =
-          this.execute(
-              sessionOps, null, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
-      if (!resultSet.wasApplied()) {
-        throw new HelenusException("Failed to apply batch.");
-      }
+        batch.setDefaultTimestamp(timestampGenerator.next());
+        ResultSet resultSet =
+                this.execute(
+                        sessionOps, null, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
+        if (!resultSet.wasApplied()) {
+            throw new HelenusException("Failed to apply batch.");
+        }
+    } catch (TimeoutException e) {
+        throw new HelenusException(e);
     } finally {
       context.stop();
     }
     return batch.getDefaultTimestamp();
   }
 
-  public Long sync(UnitOfWork uow) throws TimeoutException {
+  public Long sync(UnitOfWork uow) {
     if (operations.size() == 0) return 0L;
     if (uow == null) return sync();
 
     final Timer.Context context = requestLatency.time();
     final Stopwatch timer = Stopwatch.createStarted();
     try {
-      uow.recordCacheAndDatabaseOperationCount(0, 1);
-      batch.setDefaultTimestamp(timestampGenerator.next());
-      ResultSet resultSet =
-          this.execute(
-              sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
-      if (!resultSet.wasApplied()) {
-        throw new HelenusException("Failed to apply batch.");
-      }
+        uow.recordCacheAndDatabaseOperationCount(0, 1);
+        batch.setDefaultTimestamp(timestampGenerator.next());
+        ResultSet resultSet =
+                this.execute(
+                        sessionOps, uow, queryExecutionTimeout, queryTimeoutUnits, showValues, false);
+        if (!resultSet.wasApplied()) {
+            throw new HelenusException("Failed to apply batch.");
+        }
+    } catch (TimeoutException e) {
+        throw new HelenusException(e);
     } finally {
       context.stop();
       timer.stop();
